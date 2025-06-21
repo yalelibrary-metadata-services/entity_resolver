@@ -182,6 +182,6 @@ weaviate_data
 .windsurfrules
 CLAUDE.md
 CLAUDE.md.bak
-setfit/
+setfit/model_multilingual_minilm
 data/output/
 logs/
