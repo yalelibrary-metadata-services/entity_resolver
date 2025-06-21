@@ -1,0 +1,619 @@
+"""
+Orchestration Module for Entity Resolution
+
+This module orchestrates the entire entity resolution pipeline, coordinating
+the execution of individual components for preprocessing, embedding, indexing,
+feature engineering, classifier training, and entity classification.
+"""
+
+import logging
+import os
+import time
+import json
+import pickle
+import argparse
+import yaml
+from typing import Dict, List, Tuple, Any, Optional
+
+# Local imports
+from src.preprocessing import process_data, load_hash_lookup, load_string_dict
+from src.embedding_and_indexing import embedding_and_indexing
+# Keep old imports for backward compatibility but mark as deprecated
+import warnings
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore")
+#    from src.embedding import generate_embeddings
+    from src.indexing import index_data_in_weaviate, get_weaviate_client, WeaviateClientManager, close_weaviate_client
+from src.feature_engineering import FeatureEngineering
+from src.querying import create_weaviate_querying
+from src.training import train_classifier, EntityClassifier
+from src.classifying import EntityClassification
+from src.reporting import generate_report
+from src.custom_features import register_custom_features
+from src.checkpoint_manager import get_checkpoint_manager
+
+logger = logging.getLogger(__name__)
+
+class PipelineOrchestrator:
+    """
+    Orchestrates the execution of the entity resolution pipeline.
+    """
+    
+    def __init__(self, config_path: str = 'config.yml'):
+        """
+        Initialize the pipeline orchestrator.
+        
+        Args:
+            config_path: Path to the configuration file
+        """
+        self.config_path = config_path
+        self.config = self._load_config()
+        
+        # Set up logging
+        self._setup_logging()
+        
+        # Initialize state
+        self.hash_lookup = None
+        self.string_dict = None
+        self.feature_engineering = None
+        self.weaviate_querying = None
+        self.classifier = None
+        
+        # Pipeline stages
+        self.stages = [
+            {'name': 'preprocessing', 'enabled': True, 'func': self._run_preprocessing},
+            {'name': 'embedding_and_indexing', 'enabled': True, 'func': self._run_embedding_and_indexing},
+            # Keep old stages for backward compatibility but mark as deprecated
+            {'name': 'embedding', 'enabled': False, 'func': self._run_embedding, 'deprecated': True},
+            {'name': 'indexing', 'enabled': False, 'func': self._run_indexing, 'deprecated': True},
+            {'name': 'training', 'enabled': True, 'func': self._run_training},
+            {'name': 'classifying', 'enabled': True, 'func': self._run_classifying},
+            {'name': 'reporting', 'enabled': True, 'func': self._run_reporting}
+        ]
+        
+        logger.info(f"Initialized PipelineOrchestrator with config from {config_path}")
+    
+    def run_pipeline(self, start_stage: str = None, end_stage: str = None,
+                    reset_stages: List[str] = None, resume: bool = False) -> Dict[str, Any]:
+        """
+        Run the entity resolution pipeline.
+        
+        Args:
+            start_stage: Optional stage to start from
+            end_stage: Optional stage to end at
+            reset_stages: Optional list of stages to reset
+            resume: Whether to resume from the last successful stage
+            
+        Returns:
+            Dictionary with pipeline results and statistics
+        """
+        logger.info(f"Starting pipeline execution")
+        start_time = time.time()
+        
+        # Initialize checkpoint manager
+        checkpoint_manager = get_checkpoint_manager(self.config)
+        
+        # Handle resumption logic
+        if resume and not start_stage:
+            next_stage = checkpoint_manager.get_next_stage(self.stages)
+            if next_stage:
+                start_stage = next_stage
+                last_stage = checkpoint_manager.get_last_completed_stage()
+                logger.info(f"Resuming pipeline from stage '{start_stage}' (after '{last_stage}')")
+            else:
+                logger.info(f"All stages already completed, starting from beginning")
+        
+        # Check if this is a preprocessing-only operation
+        preprocessing_only = ((start_stage == "preprocessing" and end_stage == "preprocessing") or
+                              (reset_stages and "preprocessing" in reset_stages))
+        
+        # Modify config to suppress vector warnings during preprocessing
+        if preprocessing_only:
+            self.config["suppress_vector_warnings"] = True
+            logger.info("Vector retrieval warnings will be suppressed during preprocessing operations")
+        
+        try:
+            # Reset specified stages if provided
+            if reset_stages:
+                for stage in reset_stages:
+                    self._reset_stage(stage)
+                    checkpoint_manager.reset_stage(stage)
+            
+            # Determine which stages to run
+            stages_to_run = self._get_stages_to_run(start_stage, end_stage)
+            
+            # Store metrics for each stage
+            metrics = {}
+            
+            # Run each stage
+            for stage in stages_to_run:
+                logger.info(f"Running pipeline stage: {stage['name']}")
+                stage_start = time.time()
+                
+                try:
+                    # Run stage function
+                    stage_metrics = stage['func']()
+                    
+                    # Record metrics
+                    elapsed = time.time() - stage_start
+                    metrics[stage['name']] = {
+                        'elapsed_time': elapsed,
+                        **stage_metrics
+                    }
+                    
+                    # Update checkpoint status
+                    checkpoint_manager.update_stage_completion(
+                        stage['name'], 
+                        'completed',
+                        metrics[stage['name']]
+                    )
+                    
+                    logger.info(f"Completed stage {stage['name']} in {elapsed:.2f} seconds")
+                    
+                except Exception as e:
+                    logger.error(f"Error in stage {stage['name']}: {str(e)}", exc_info=True)
+                    metrics[stage['name']] = {
+                        'status': 'failed',
+                        'error': str(e)
+                    }
+                    # Update checkpoint with failure status
+                    checkpoint_manager.update_stage_completion(stage['name'], 'failed')
+                    break
+            
+            # Calculate total runtime
+            total_runtime = time.time() - start_time
+            logger.info(f"Pipeline execution completed in {total_runtime:.2f} seconds")
+            
+            # Generate final metrics
+            pipeline_metrics = {
+                'total_runtime': total_runtime,
+                'stages': metrics,
+                'config': {k: v for k, v in self.config.items() if isinstance(v, (str, int, float, bool, list, dict))}
+            }
+            
+            # Save metrics to file
+            output_dir = self.config.get('output_dir', 'data/output')
+            os.makedirs(output_dir, exist_ok=True)
+            metrics_path = os.path.join(output_dir, 'pipeline_metrics.json')
+            
+            with open(metrics_path, 'w') as f:
+                json.dump(pipeline_metrics, f, indent=2)
+            
+            logger.info(f"Saved pipeline metrics to {metrics_path}")
+            
+            return pipeline_metrics
+        
+        finally:
+            # Always restore original config
+            if preprocessing_only and "suppress_vector_warnings" in self.config:
+                self.config.pop("suppress_vector_warnings")
+                logger.info("Restored normal vector warning behavior")
+    
+    def _load_config(self) -> Dict[str, Any]:
+        """
+        Load configuration from file.
+        
+        Returns:
+            Configuration dictionary
+        """
+        try:
+            with open(self.config_path, 'r') as f:
+                config = yaml.safe_load(f)
+            
+            # Set default values for required parameters
+            config.setdefault('input_dir', 'data/input')
+            config.setdefault('output_dir', 'data/output')
+            config.setdefault('checkpoint_dir', 'data/checkpoints')
+            config.setdefault('ground_truth_dir', 'data/ground_truth')
+            config.setdefault('log_dir', 'logs')
+            
+            return config
+            
+        except Exception as e:
+            print(f"Error loading configuration: {str(e)}")
+            raise
+    
+    def _setup_logging(self) -> None:
+        """
+        Set up logging configuration.
+        """
+        log_dir = self.config.get('log_dir', 'logs')
+        os.makedirs(log_dir, exist_ok=True)
+        
+        log_level = getattr(logging, self.config.get('log_level', 'INFO'))
+        log_file = os.path.join(log_dir, 'pipeline.log')
+        
+        # Configure root logger - use existing handlers to avoid creating new ones repeatedly
+        root_logger = logging.getLogger()
+        if not root_logger.handlers:
+            file_handler = logging.FileHandler(log_file)
+            console_handler = logging.StreamHandler()
+            
+            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            file_handler.setFormatter(formatter)
+            console_handler.setFormatter(formatter)
+            
+            root_logger.addHandler(file_handler)
+            root_logger.addHandler(console_handler)
+            
+        root_logger.setLevel(log_level)
+    
+    def _get_stages_to_run(self, start_stage: str = None, 
+                          end_stage: str = None) -> List[Dict[str, Any]]:
+        """
+        Get stages to run based on start and end points.
+        
+        Args:
+            start_stage: Optional stage to start from
+            end_stage: Optional stage to end at
+            
+        Returns:
+            List of stage dictionaries to run
+        """
+        # Default is to run all enabled stages
+        stages_to_run = [stage for stage in self.stages if stage['enabled']]
+        
+        # Filter by start stage if provided
+        if start_stage:
+            start_idx = next((i for i, s in enumerate(stages_to_run) 
+                             if s['name'] == start_stage), 0)
+            stages_to_run = stages_to_run[start_idx:]
+        
+        # Filter by end stage if provided
+        if end_stage:
+            end_idx = next((i for i, s in enumerate(stages_to_run) 
+                           if s['name'] == end_stage), len(stages_to_run) - 1)
+            stages_to_run = stages_to_run[:end_idx + 1]
+        
+        return stages_to_run
+    
+    def _reset_stage(self, stage_name: str) -> None:
+        """
+        Reset a specific pipeline stage.
+        
+        Args:
+            stage_name: Name of the stage to reset
+        """
+        logger.info(f"Resetting pipeline stage: {stage_name}")
+        
+        if stage_name == 'preprocessing':
+            # Delete checkpointed files
+            checkpoint_dir = self.config.get('checkpoint_dir', 'data/checkpoints')
+            files_to_delete = [
+                os.path.join(checkpoint_dir, 'hash_lookup.pkl'),
+                os.path.join(checkpoint_dir, 'string_dict.pkl')
+            ]
+            
+            for file_path in files_to_delete:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    logger.info(f"Deleted checkpoint file: {file_path}")
+            
+        elif stage_name == 'embedding_and_indexing':
+            # Delete checkpoint and reset Weaviate collection
+            checkpoint_dir = self.config.get('checkpoint_dir', 'data/checkpoints')
+            processed_hashes_path = os.path.join(checkpoint_dir, 'processed_hashes.pkl')
+            
+            if os.path.exists(processed_hashes_path):
+                os.remove(processed_hashes_path)
+                logger.info(f"Deleted processed hashes checkpoint: {processed_hashes_path}")
+            
+            # Set the recreate_collections flag to ensure the collection is recreated
+            # This flag will be checked in embedding_and_indexing.py
+            self.config["recreate_collections"] = True
+            logger.info("Set recreate_collections flag to True")
+            
+            # We'll let the embedding_and_indexing module handle the collection deletion and recreation
+            # since it has more complete error handling for this process
+            
+        elif stage_name == 'embedding':
+            # Legacy stage - redirect to embedding_and_indexing
+            logger.warning("The 'embedding' stage is deprecated. Resetting 'embedding_and_indexing' stage instead.")
+            self._reset_stage('embedding_and_indexing')
+            
+        elif stage_name == 'indexing':
+            # Legacy stage - redirect to embedding_and_indexing
+            logger.warning("The 'indexing' stage is deprecated. Resetting 'embedding_and_indexing' stage instead.")
+            self._reset_stage('embedding_and_indexing')
+            
+        elif stage_name == 'training':
+            # Delete trained model
+            checkpoint_dir = self.config.get('checkpoint_dir', 'data/checkpoints')
+            model_path = os.path.join(checkpoint_dir, 'classifier_model.pkl')
+            
+            if os.path.exists(model_path):
+                os.remove(model_path)
+                logger.info(f"Deleted trained model: {model_path}")
+            
+        elif stage_name == 'classifying':
+            # Delete classification checkpoint and output
+            checkpoint_dir = self.config.get('checkpoint_dir', 'data/checkpoints')
+            output_dir = self.config.get('output_dir', 'data/output')
+            
+            files_to_delete = [
+                os.path.join(checkpoint_dir, 'classification_checkpoint.pkl'),
+                os.path.join(output_dir, 'entity_matches.csv'),
+                os.path.join(output_dir, 'entity_clusters.json')
+            ]
+            
+            for file_path in files_to_delete:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    logger.info(f"Deleted classification file: {file_path}")
+            
+        elif stage_name == 'reporting':
+            # Delete report files
+            output_dir = self.config.get('output_dir', 'data/output')
+            report_path = os.path.join(output_dir, 'entity_resolution_report.html')
+            
+            if os.path.exists(report_path):
+                os.remove(report_path)
+                logger.info(f"Deleted report file: {report_path}")
+        
+        else:
+            logger.warning(f"Unknown stage name for reset: {stage_name}")
+    
+    def _run_preprocessing(self) -> Dict[str, Any]:
+        """
+        Run the preprocessing stage.
+        
+        Returns:
+            Dictionary with preprocessing metrics
+        """
+        # Load or process data
+        input_dir = self.config.get('input_dir', 'data/input')
+        checkpoint_dir = self.config.get('checkpoint_dir', 'data/checkpoints')
+        
+        # Check for existing preprocessing results
+        hash_lookup_path = os.path.join(checkpoint_dir, 'hash_lookup.pkl')
+        string_dict_path = os.path.join(checkpoint_dir, 'string_dict.pkl')
+        
+        if os.path.exists(hash_lookup_path) and os.path.exists(string_dict_path):
+            logger.info("Loading preprocessed data from checkpoints")
+            self.hash_lookup = load_hash_lookup(hash_lookup_path)
+            self.string_dict = load_string_dict(string_dict_path)
+            
+            metrics = {
+                'status': 'loaded_from_checkpoint',
+                'entity_count': len(self.hash_lookup),
+                'unique_strings': len(self.string_dict)
+            }
+        else:
+            logger.info("Running data preprocessing")
+            self.hash_lookup, self.string_dict, metrics = process_data(
+                self.config, input_dir, checkpoint_dir
+            )
+        
+        logger.info(f"Preprocessing complete: {len(self.hash_lookup)} entities, "
+                   f"{len(self.string_dict)} unique strings")
+        
+        return metrics
+    
+    def _run_embedding_and_indexing(self) -> Dict[str, Any]:
+        """
+        Run the unified embedding generation and indexing stage.
+        
+        Returns:
+            Dictionary with embedding and indexing metrics
+        """
+        # Make sure preprocessing data is loaded
+        if self.hash_lookup is None or self.string_dict is None:
+            self._run_preprocessing()
+        
+        # Load additional data required for embedding and indexing
+        checkpoint_dir = self.config.get('checkpoint_dir', 'data/checkpoints')
+        field_hash_mapping_path = os.path.join(checkpoint_dir, 'field_hash_mapping.pkl')
+        string_counts_path = os.path.join(checkpoint_dir, 'string_counts.pkl')
+        
+        field_hash_mapping = {}
+        string_counts = {}
+        
+        # Load field hash mapping
+        if os.path.exists(field_hash_mapping_path):
+            try:
+                with open(field_hash_mapping_path, 'rb') as f:
+                    field_hash_mapping = pickle.load(f)
+                logger.info(f"Loaded field hash mapping with {len(field_hash_mapping)} entries")
+            except Exception as e:
+                logger.error(f"Error loading field hash mapping: {str(e)}")
+                field_hash_mapping = {}
+        
+        # Load string counts
+        if os.path.exists(string_counts_path):
+            try:
+                with open(string_counts_path, 'rb') as f:
+                    string_counts = pickle.load(f)
+                logger.info(f"Loaded string counts with {len(string_counts)} entries")
+            except Exception as e:
+                logger.error(f"Error loading string counts: {str(e)}")
+                string_counts = {}
+        
+        # Run unified embedding and indexing process
+        logger.info("Starting unified embedding and indexing process")
+        metrics = embedding_and_indexing(
+            self.config, 
+            self.string_dict, 
+            field_hash_mapping, 
+            string_counts
+        )
+        
+        return metrics
+    
+    def _run_embedding(self) -> Dict[str, Any]:
+        """
+        Legacy stage - Run the embedding generation stage.
+        
+        Returns:
+            Dictionary with embedding metrics
+        """
+        # Emit deprecation warning
+        logger.warning("The 'embedding' stage is deprecated. Please use 'embedding_and_indexing' stage instead.")
+        
+        # Redirect to unified stage
+        return self._run_embedding_and_indexing()
+    
+    def _run_indexing(self) -> Dict[str, Any]:
+        """
+        Legacy stage - Run the Weaviate indexing stage.
+        
+        Returns:
+            Dictionary with indexing metrics
+        """
+        # Emit deprecation warning
+        logger.warning("The 'indexing' stage is deprecated. Please use 'embedding_and_indexing' stage instead.")
+        
+        # Redirect to unified stage
+        return self._run_embedding_and_indexing()
+    
+    def _run_training(self) -> Dict[str, Any]:
+        """
+        Run the classifier training stage.
+        
+        Returns:
+            Dictionary with training metrics
+        """
+        # Initialize required components if not already done
+        if self.hash_lookup is None or self.string_dict is None:
+            self._run_preprocessing()
+        
+        # Use context manager for Weaviate client
+        with WeaviateClientManager(self.config) as client:
+            # Initialize feature engineering and querying
+            self.feature_engineering = FeatureEngineering(
+                self.config, client, self.hash_lookup
+            )
+            
+            # Register custom features with enhanced error handling
+            try:
+                logger.info("Registering custom features for feature engineering module")
+                register_custom_features(self.feature_engineering, self.config)
+                logger.info(f"Feature engineering has {len(self.feature_engineering.get_feature_names())} features registered")
+                logger.info(f"Feature substitution mapping: {self.feature_engineering.get_substitution_mapping()}")
+            except Exception as e:
+                logger.error(f"Error registering custom features: {str(e)}")
+                logger.error(f"Continuing with base features only - custom features may not be available")
+            
+            self.weaviate_querying = create_weaviate_querying(
+                self.config, client, self.hash_lookup
+            )
+            
+            # Train classifier
+            logger.info("Training entity classifier")
+            self.classifier = train_classifier(
+                self.config, self.feature_engineering, self.hash_lookup, self.string_dict
+            )
+        
+        # Get training metrics from the evaluation report
+        output_dir = self.config.get('output_dir', 'data/output')
+        evaluation_path = os.path.join(output_dir, 'classifier_evaluation.json')
+        training_report_path = os.path.join(output_dir, 'training_report.json')
+        
+        if os.path.exists(training_report_path):
+            with open(training_report_path, 'r') as f:
+                metrics = json.load(f)
+        elif os.path.exists(evaluation_path):
+            with open(evaluation_path, 'r') as f:
+                metrics = {'evaluation': json.load(f)}
+        else:
+            metrics = {'status': 'completed', 'details': 'No detailed metrics available'}
+        
+        return metrics
+    
+    def _run_classifying(self) -> Dict[str, Any]:
+        """
+        Run the entity classification stage.
+        
+        Returns:
+            Dictionary with classification metrics
+        """
+        # Initialize required components if not already done
+        if self.hash_lookup is None or self.string_dict is None:
+            self._run_preprocessing()
+        
+        # Initialize or load classifier if needed
+        if self.classifier is None:
+            # Load trained classifier
+            self.classifier = EntityClassifier(self.config)
+            model_path = os.path.join(
+                self.config.get('checkpoint_dir', 'data/checkpoints'),
+                'classifier_model.pkl'
+            )
+            
+            if not os.path.exists(model_path):
+                # Run training if model doesn't exist
+                self._run_training()
+            else:
+                self.classifier.load(model_path)
+        
+        # Use context manager for Weaviate client
+        with WeaviateClientManager(self.config) as client:
+            # Initialize feature engineering and querying
+            self.feature_engineering = FeatureEngineering(
+                self.config, client, self.hash_lookup
+            )
+            
+            self.weaviate_querying = create_weaviate_querying(
+                self.config, client, self.hash_lookup
+            )
+            
+            # Classify entities
+            logger.info("Classifying entities in the dataset")
+            
+            # Create classification object
+            classification = EntityClassification(
+                self.config, self.feature_engineering, self.classifier, self.weaviate_querying
+            )
+            
+            # Set hash lookup explicitly
+            classification.hash_lookup = self.hash_lookup
+            
+            # Run classification
+            entity_ids = list(self.hash_lookup.keys())
+            metrics = classification.classify_entities(entity_ids, self.hash_lookup, self.string_dict)
+        
+        return metrics
+    
+    def _run_reporting(self) -> Dict[str, Any]:
+        """
+        Run the reporting stage.
+        
+        Returns:
+            Dictionary with reporting metrics
+        """
+        # Generate final report
+        output_dir = self.config.get('output_dir', 'data/output')
+        
+        # Check if required files exist
+        matches_path = os.path.join(output_dir, 'entity_matches.csv')
+        clusters_path = os.path.join(output_dir, 'entity_clusters.json')
+        evaluation_path = os.path.join(output_dir, 'classifier_evaluation.json')
+        
+        if not (os.path.exists(matches_path) and os.path.exists(clusters_path)):
+            logger.warning("Classification results not found, running classification stage")
+            self._run_classifying()
+        
+        # Generate report
+        logger.info("Generating final entity resolution report")
+        metrics = generate_report(
+            self.config, self.hash_lookup, self.string_dict
+        )
+        
+        return metrics
+
+def main():
+    """
+    Main function for running the pipeline orchestrator.
+    """
+    parser = argparse.ArgumentParser(description='Entity Resolution Pipeline Orchestrator')
+    parser.add_argument('--config', default='config.yml', help='Path to configuration file')
+    parser.add_argument('--start', help='Stage to start from')
+    parser.add_argument('--end', help='Stage to end at')
+    parser.add_argument('--reset', nargs='*', help='Stages to reset')
+    args = parser.parse_args()
+    
+    # Create and run orchestrator
+    orchestrator = PipelineOrchestrator(args.config)
+    orchestrator.run_pipeline(args.start, args.end, args.reset)
+
+if __name__ == "__main__":
+    main()

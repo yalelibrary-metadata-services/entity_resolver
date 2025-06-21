@@ -1,0 +1,777 @@
+{
+  "@context": {
+    "skos": "http://www.w3.org/2004/02/skos/core#",
+    "dc": "http://purl.org/dc/elements/1.1/",
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+    "owl": "http://www.w3.org/2002/07/owl#",
+    "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
+    "foaf": "http://xmlns.com/foaf/0.1/"
+  },
+  "@id": "http://example.org/entityresolution/conceptscheme",
+  "@type": "skos:ConceptScheme",
+  "dc:title": "Entity Resolution Classification Scheme",
+  "dc:description": "A hierarchical classification scheme for categorizing person entities in library catalog data",
+  "dc:creator": "Yale University Library",
+  "dc:date": "2025-04-15",
+  "dc:language": "en",
+  "skos:hasTopConcept": [
+    {
+      "@id": "http://example.org/entityresolution/concept/arts",
+      "@type": "skos:Concept",
+      "skos:prefLabel": {
+        "@value": "Arts and Cultural Production",
+        "@language": "en"
+      },
+      "skos:altLabel": [
+        {
+          "@value": "Creative Arts",
+          "@language": "en"
+        },
+        {
+          "@value": "Fine Arts",
+          "@language": "en"
+        },
+        {
+          "@value": "Cultural Expression",
+          "@language": "en"
+        }
+      ],
+      "skos:definition": {
+        "@value": "Persons who create, perform, interpret, critique, or otherwise contribute to artistic and cultural expressions in various media and forms",
+        "@language": "en"
+      },
+      "skos:scopeNote": {
+        "@value": "Encompasses all forms of creative expression, whether visual, verbal, musical, or performative",
+        "@language": "en"
+      },
+      "skos:narrower": [
+        {
+          "@id": "http://example.org/entityresolution/concept/literature",
+          "@type": "skos:Concept",
+          "skos:prefLabel": {
+            "@value": "Literature",
+            "@language": "en"
+          },
+          "skos:altLabel": [
+            {
+              "@value": "Literary Arts",
+              "@language": "en"
+            },
+            {
+              "@value": "Literary Creation",
+              "@language": "en"
+            },
+            {
+              "@value": "Writing",
+              "@language": "en"
+            }
+          ],
+          "skos:definition": {
+            "@value": "Persons who create, interpret, or analyze written works, including fiction, poetry, drama, essays, and literary criticism",
+            "@language": "en"
+          },
+          "skos:scopeNote": {
+            "@value": "Includes authors, poets, playwrights, literary critics, essayists, and others involved in the creation and analysis of written artistic works",
+            "@language": "en"
+          }
+        },
+        {
+          "@id": "http://example.org/entityresolution/concept/visualarts",
+          "@type": "skos:Concept",
+          "skos:prefLabel": {
+            "@value": "Visual Arts",
+            "@language": "en"
+          },
+          "skos:altLabel": [
+            {
+              "@value": "Plastic Arts",
+              "@language": "en"
+            },
+            {
+              "@value": "Fine Arts",
+              "@language": "en"
+            },
+            {
+              "@value": "Graphic Arts",
+              "@language": "en"
+            }
+          ],
+          "skos:definition": {
+            "@value": "Persons who create, interpret, or analyze visual art forms, including painting, sculpture, drawing, photography, printmaking, and design",
+            "@language": "en"
+          },
+          "skos:scopeNote": {
+            "@value": "Includes painters, sculptors, photographers, illustrators, designers, art critics, curators, and others concerned with visual expression",
+            "@language": "en"
+          }
+        },
+        {
+          "@id": "http://example.org/entityresolution/concept/music",
+          "@type": "skos:Concept",
+          "skos:prefLabel": {
+            "@value": "Music",
+            "@language": "en"
+          },
+          "skos:altLabel": [
+            {
+              "@value": "Musical Arts",
+              "@language": "en"
+            },
+            {
+              "@value": "Musical Composition",
+              "@language": "en"
+            },
+            {
+              "@value": "Musical Performance",
+              "@language": "en"
+            }
+          ],
+          "skos:definition": {
+            "@value": "Persons who create, perform, interpret, or analyze musical works and expressions across genres and traditions",
+            "@language": "en"
+          },
+          "skos:scopeNote": {
+            "@value": "Includes composers, musicians, conductors, singers, musicologists, and others involved in the creation, performance, and study of music",
+            "@language": "en"
+          }
+        },
+        {
+          "@id": "http://example.org/entityresolution/concept/performingarts",
+          "@type": "skos:Concept",
+          "skos:prefLabel": {
+            "@value": "Performing Arts",
+            "@language": "en"
+          },
+          "skos:altLabel": [
+            {
+              "@value": "Theater",
+              "@language": "en"
+            },
+            {
+              "@value": "Dance",
+              "@language": "en"
+            },
+            {
+              "@value": "Film and Cinema",
+              "@language": "en"
+            }
+          ],
+          "skos:definition": {
+            "@value": "Persons who create, perform, direct, or analyze works presented through live or recorded performance, including theater, dance, film, and television",
+            "@language": "en"
+          },
+          "skos:scopeNote": {
+            "@value": "Includes actors, directors, dancers, choreographers, filmmakers, and others involved in performing arts traditions and media",
+            "@language": "en"
+          }
+        }
+      ]
+    },
+    {
+      "@id": "http://example.org/entityresolution/concept/science",
+      "@type": "skos:Concept",
+      "skos:prefLabel": {
+        "@value": "Sciences and Research",
+        "@language": "en"
+      },
+      "skos:altLabel": [
+        {
+          "@value": "Scientific Inquiry",
+          "@language": "en"
+        },
+        {
+          "@value": "Scientific Investigation",
+          "@language": "en"
+        },
+        {
+          "@value": "Natural Sciences",
+          "@language": "en"
+        }
+      ],
+      "skos:definition": {
+        "@value": "Persons who discover, analyze, theorize, or otherwise contribute to the systematic study of natural phenomena and the generation of knowledge through empirical methods",
+        "@language": "en"
+      },
+      "skos:scopeNote": {
+        "@value": "Encompasses all branches of scientific inquiry, from natural to applied sciences, medicine, and technology",
+        "@language": "en"
+      },
+      "skos:narrower": [
+        {
+          "@id": "http://example.org/entityresolution/concept/naturalsciences",
+          "@type": "skos:Concept",
+          "skos:prefLabel": {
+            "@value": "Natural Sciences",
+            "@language": "en"
+          },
+          "skos:altLabel": [
+            {
+              "@value": "Physical Sciences",
+              "@language": "en"
+            },
+            {
+              "@value": "Biological Sciences",
+              "@language": "en"
+            },
+            {
+              "@value": "Earth Sciences",
+              "@language": "en"
+            }
+          ],
+          "skos:definition": {
+            "@value": "Persons who study the physical, chemical, and biological aspects of the natural world through observation, experimentation, and theoretical analysis",
+            "@language": "en"
+          },
+          "skos:scopeNote": {
+            "@value": "Includes physicists, chemists, biologists, astronomers, geologists, and others who investigate natural phenomena through systematic methods",
+            "@language": "en"
+          }
+        },
+        {
+          "@id": "http://example.org/entityresolution/concept/mathematics",
+          "@type": "skos:Concept",
+          "skos:prefLabel": {
+            "@value": "Mathematics",
+            "@language": "en"
+          },
+          "skos:altLabel": [
+            {
+              "@value": "Mathematical Sciences",
+              "@language": "en"
+            },
+            {
+              "@value": "Pure Mathematics",
+              "@language": "en"
+            },
+            {
+              "@value": "Applied Mathematics",
+              "@language": "en"
+            }
+          ],
+          "skos:definition": {
+            "@value": "Persons who study abstract structures, patterns, and relationships through logical reasoning, formal systems, and quantitative methods",
+            "@language": "en"
+          },
+          "skos:scopeNote": {
+            "@value": "Includes mathematicians, statisticians, logicians, and others who develop and apply mathematical methods across domains",
+            "@language": "en"
+          }
+        },
+        {
+          "@id": "http://example.org/entityresolution/concept/medicine",
+          "@type": "skos:Concept",
+          "skos:prefLabel": {
+            "@value": "Medicine and Health Sciences",
+            "@language": "en"
+          },
+          "skos:altLabel": [
+            {
+              "@value": "Medical Sciences",
+              "@language": "en"
+            },
+            {
+              "@value": "Healthcare",
+              "@language": "en"
+            },
+            {
+              "@value": "Clinical Medicine",
+              "@language": "en"
+            }
+          ],
+          "skos:definition": {
+            "@value": "Persons who study, prevent, diagnose, treat, or otherwise address conditions affecting human health through scientific methods and clinical practice",
+            "@language": "en"
+          },
+          "skos:scopeNote": {
+            "@value": "Includes physicians, surgeons, nurses, epidemiologists, pharmacologists, public health experts, and others concerned with health and disease",
+            "@language": "en"
+          }
+        },
+        {
+          "@id": "http://example.org/entityresolution/concept/appliedsciences",
+          "@type": "skos:Concept",
+          "skos:prefLabel": {
+            "@value": "Applied Sciences and Technology",
+            "@language": "en"
+          },
+          "skos:altLabel": [
+            {
+              "@value": "Engineering",
+              "@language": "en"
+            },
+            {
+              "@value": "Technology",
+              "@language": "en"
+            },
+            {
+              "@value": "Invention",
+              "@language": "en"
+            }
+          ],
+          "skos:definition": {
+            "@value": "Persons who apply scientific knowledge to solve practical problems, create technologies, or develop methods for practical applications",
+            "@language": "en"
+          },
+          "skos:scopeNote": {
+            "@value": "Includes engineers, technologists, inventors, and others who transform scientific principles into practical applications",
+            "@language": "en"
+          }
+        },
+        {
+          "@id": "http://example.org/entityresolution/concept/agriculture",
+          "@type": "skos:Concept",
+          "skos:prefLabel": {
+            "@value": "Agriculture and Environmental Sciences",
+            "@language": "en"
+          },
+          "skos:altLabel": [
+            {
+              "@value": "Farming",
+              "@language": "en"
+            },
+            {
+              "@value": "Horticulture",
+              "@language": "en"
+            },
+            {
+              "@value": "Ecology",
+              "@language": "en"
+            }
+          ],
+          "skos:definition": {
+            "@value": "Persons who study, develop, or practice methods of cultivating plants, raising animals, or managing natural resources for human use or environmental sustainability",
+            "@language": "en"
+          },
+          "skos:scopeNote": {
+            "@value": "Includes agriculturalists, horticulturists, foresters, ecologists, and others concerned with the cultivation of living organisms and environmental management",
+            "@language": "en"
+          }
+        }
+      ]
+    },
+    {
+      "@id": "http://example.org/entityresolution/concept/humanities",
+      "@type": "skos:Concept",
+      "skos:prefLabel": {
+        "@value": "Humanities and Intellectual Thought",
+        "@language": "en"
+      },
+      "skos:altLabel": [
+        {
+          "@value": "Human Studies",
+          "@language": "en"
+        },
+        {
+          "@value": "Liberal Arts",
+          "@language": "en"
+        },
+        {
+          "@value": "Philosophy and Thought",
+          "@language": "en"
+        }
+      ],
+      "skos:definition": {
+        "@value": "Persons who examine, interpret, or analyze human experience, culture, history, language, or thought through critical, theoretical, or philosophical approaches",
+        "@language": "en"
+      },
+      "skos:scopeNote": {
+        "@value": "Encompasses fields concerned with interpretation and meaning, often with emphasis on qualitative and hermeneutic methods",
+        "@language": "en"
+      },
+      "skos:narrower": [
+        {
+          "@id": "http://example.org/entityresolution/concept/philosophy",
+          "@type": "skos:Concept",
+          "skos:prefLabel": {
+            "@value": "Philosophy and Ethics",
+            "@language": "en"
+          },
+          "skos:altLabel": [
+            {
+              "@value": "Philosophical Thought",
+              "@language": "en"
+            },
+            {
+              "@value": "Metaphysics",
+              "@language": "en"
+            },
+            {
+              "@value": "Moral Philosophy",
+              "@language": "en"
+            }
+          ],
+          "skos:definition": {
+            "@value": "Persons who examine fundamental questions about existence, knowledge, values, reason, mind, and language through conceptual analysis and logical argumentation",
+            "@language": "en"
+          },
+          "skos:scopeNote": {
+            "@value": "Includes philosophers, ethicists, logicians, and others who engage in abstract conceptual inquiry and analysis of fundamental questions",
+            "@language": "en"
+          }
+        },
+        {
+          "@id": "http://example.org/entityresolution/concept/religion",
+          "@type": "skos:Concept",
+          "skos:prefLabel": {
+            "@value": "Religion and Theology",
+            "@language": "en"
+          },
+          "skos:altLabel": [
+            {
+              "@value": "Religious Studies",
+              "@language": "en"
+            },
+            {
+              "@value": "Spiritual Traditions",
+              "@language": "en"
+            },
+            {
+              "@value": "Sacred Texts",
+              "@language": "en"
+            }
+          ],
+          "skos:definition": {
+            "@value": "Persons who study, interpret, lead, or otherwise engage with religious traditions, theological concepts, spiritual practices, or sacred texts",
+            "@language": "en"
+          },
+          "skos:scopeNote": {
+            "@value": "Includes theologians, religious leaders, scholars of religion, and others concerned with religious thought, practice, and institutions",
+            "@language": "en"
+          }
+        },
+        {
+          "@id": "http://example.org/entityresolution/concept/history",
+          "@type": "skos:Concept",
+          "skos:prefLabel": {
+            "@value": "History and Historical Studies",
+            "@language": "en"
+          },
+          "skos:altLabel": [
+            {
+              "@value": "Historiography",
+              "@language": "en"
+            },
+            {
+              "@value": "Historical Research",
+              "@language": "en"
+            },
+            {
+              "@value": "Archaeology",
+              "@language": "en"
+            }
+          ],
+          "skos:definition": {
+            "@value": "Persons who study, document, analyze, or interpret past events, societies, cultures, or developments through critical examination of sources and contexts",
+            "@language": "en"
+          },
+          "skos:scopeNote": {
+            "@value": "Includes historians, archaeologists, archivists, and others who investigate, reconstruct, and interpret the past",
+            "@language": "en"
+          }
+        },
+        {
+          "@id": "http://example.org/entityresolution/concept/linguistics",
+          "@type": "skos:Concept",
+          "skos:prefLabel": {
+            "@value": "Language and Linguistics",
+            "@language": "en"
+          },
+          "skos:altLabel": [
+            {
+              "@value": "Philology",
+              "@language": "en"
+            },
+            {
+              "@value": "Language Studies",
+              "@language": "en"
+            },
+            {
+              "@value": "Linguistic Analysis",
+              "@language": "en"
+            }
+          ],
+          "skos:definition": {
+            "@value": "Persons who study, analyze, document, or describe language structure, function, use, development, or variation through systematic methods",
+            "@language": "en"
+          },
+          "skos:scopeNote": {
+            "@value": "Includes linguists, philologists, lexicographers, and others concerned with the systematic study of language and its properties",
+            "@language": "en"
+          }
+        },
+        {
+          "@id": "http://example.org/entityresolution/concept/culturalstudies",
+          "@type": "skos:Concept",
+          "skos:prefLabel": {
+            "@value": "Cultural and Area Studies",
+            "@language": "en"
+          },
+          "skos:altLabel": [
+            {
+              "@value": "Anthropology",
+              "@language": "en"
+            },
+            {
+              "@value": "Ethnography",
+              "@language": "en"
+            },
+            {
+              "@value": "Regional Studies",
+              "@language": "en"
+            }
+          ],
+          "skos:definition": {
+            "@value": "Persons who study, document, analyze, or interpret cultural practices, social groups, or geographic regions through interdisciplinary approaches",
+            "@language": "en"
+          },
+          "skos:scopeNote": {
+            "@value": "Includes anthropologists, ethnographers, folklorists, area specialists, and others who examine cultural phenomena in their social and historical contexts",
+            "@language": "en"
+          }
+        }
+      ]
+    },
+    {
+      "@id": "http://example.org/entityresolution/concept/society",
+      "@type": "skos:Concept",
+      "skos:prefLabel": {
+        "@value": "Society and Governance",
+        "@language": "en"
+      },
+      "skos:altLabel": [
+        {
+          "@value": "Social Institutions",
+          "@language": "en"
+        },
+        {
+          "@value": "Public Affairs",
+          "@language": "en"
+        },
+        {
+          "@value": "Civic Leadership",
+          "@language": "en"
+        }
+      ],
+      "skos:definition": {
+        "@value": "Persons who lead, govern, analyze, reform, or otherwise engage with social institutions, political systems, economic structures, or collective action",
+        "@language": "en"
+      },
+      "skos:scopeNote": {
+        "@value": "Encompasses fields concerned with social organization, governance, economic activity, and collective behavior",
+        "@language": "en"
+      },
+      "skos:narrower": [
+        {
+          "@id": "http://example.org/entityresolution/concept/politics",
+          "@type": "skos:Concept",
+          "skos:prefLabel": {
+            "@value": "Politics and Government",
+            "@language": "en"
+          },
+          "skos:altLabel": [
+            {
+              "@value": "Political Leadership",
+              "@language": "en"
+            },
+            {
+              "@value": "Statecraft",
+              "@language": "en"
+            },
+            {
+              "@value": "Public Administration",
+              "@language": "en"
+            }
+          ],
+          "skos:definition": {
+            "@value": "Persons who govern, lead, analyze, or participate in political systems, government institutions, public policy, or international relations",
+            "@language": "en"
+          },
+          "skos:scopeNote": {
+            "@value": "Includes politicians, statesmen, diplomats, political scientists, and others involved in governance and political processes",
+            "@language": "en"
+          }
+        },
+        {
+          "@id": "http://example.org/entityresolution/concept/law",
+          "@type": "skos:Concept",
+          "skos:prefLabel": {
+            "@value": "Law and Jurisprudence",
+            "@language": "en"
+          },
+          "skos:altLabel": [
+            {
+              "@value": "Legal Studies",
+              "@language": "en"
+            },
+            {
+              "@value": "Legal Practice",
+              "@language": "en"
+            },
+            {
+              "@value": "Judiciary",
+              "@language": "en"
+            }
+          ],
+          "skos:definition": {
+            "@value": "Persons who create, interpret, apply, analyze, or otherwise engage with legal systems, principles, codes, or cases",
+            "@language": "en"
+          },
+          "skos:scopeNote": {
+            "@value": "Includes judges, lawyers, legal scholars, and others concerned with legal institutions, principles, and processes",
+            "@language": "en"
+          }
+        },
+        {
+          "@id": "http://example.org/entityresolution/concept/economics",
+          "@type": "skos:Concept",
+          "skos:prefLabel": {
+            "@value": "Economics and Business",
+            "@language": "en"
+          },
+          "skos:altLabel": [
+            {
+              "@value": "Economic Theory",
+              "@language": "en"
+            },
+            {
+              "@value": "Commerce",
+              "@language": "en"
+            },
+            {
+              "@value": "Entrepreneurship",
+              "@language": "en"
+            }
+          ],
+          "skos:definition": {
+            "@value": "Persons who study, analyze, lead, or participate in economic systems, business enterprises, commercial activities, or financial institutions",
+            "@language": "en"
+          },
+          "skos:scopeNote": {
+            "@value": "Includes economists, entrepreneurs, business leaders, and others involved in economic theory, commerce, and business activities",
+            "@language": "en"
+          }
+        },
+        {
+          "@id": "http://example.org/entityresolution/concept/education",
+          "@type": "skos:Concept",
+          "skos:prefLabel": {
+            "@value": "Education and Pedagogy",
+            "@language": "en"
+          },
+          "skos:altLabel": [
+            {
+              "@value": "Teaching",
+              "@language": "en"
+            },
+            {
+              "@value": "Learning",
+              "@language": "en"
+            },
+            {
+              "@value": "Educational Theory",
+              "@language": "en"
+            }
+          ],
+          "skos:definition": {
+            "@value": "Persons who teach, lead, study, reform, or otherwise contribute to educational institutions, pedagogical methods, or learning processes",
+            "@language": "en"
+          },
+          "skos:scopeNote": {
+            "@value": "Includes educators, teachers, professors, educational theorists, and others concerned with teaching, learning, and educational institutions",
+            "@language": "en"
+          }
+        },
+        {
+          "@id": "http://example.org/entityresolution/concept/military",
+          "@type": "skos:Concept",
+          "skos:prefLabel": {
+            "@value": "Military and Defense",
+            "@language": "en"
+          },
+          "skos:altLabel": [
+            {
+              "@value": "Armed Forces",
+              "@language": "en"
+            },
+            {
+              "@value": "Military Strategy",
+              "@language": "en"
+            },
+            {
+              "@value": "Naval Science",
+              "@language": "en"
+            }
+          ],
+          "skos:definition": {
+            "@value": "Persons who lead, serve in, study, or develop military forces, defense systems, martial strategies, or security operations",
+            "@language": "en"
+          },
+          "skos:scopeNote": {
+            "@value": "Includes military leaders, strategists, and others involved in defense, security, and military affairs",
+            "@language": "en"
+          }
+        },
+        {
+          "@id": "http://example.org/entityresolution/concept/socialreform",
+          "@type": "skos:Concept",
+          "skos:prefLabel": {
+            "@value": "Social Reform and Advocacy",
+            "@language": "en"
+          },
+          "skos:altLabel": [
+            {
+              "@value": "Activism",
+              "@language": "en"
+            },
+            {
+              "@value": "Social Movements",
+              "@language": "en"
+            },
+            {
+              "@value": "Humanitarianism",
+              "@language": "en"
+            }
+          ],
+          "skos:definition": {
+            "@value": "Persons who advocate for, organize, lead, or study social change, reform movements, humanitarian causes, or civic improvements",
+            "@language": "en"
+          },
+          "skos:scopeNote": {
+            "@value": "Includes reformers, activists, philanthropists, and others who work to advance social causes and transform societal conditions",
+            "@language": "en"
+          }
+        },
+        {
+          "@id": "http://example.org/entityresolution/concept/media",
+          "@type": "skos:Concept",
+          "skos:prefLabel": {
+            "@value": "Media and Communication",
+            "@language": "en"
+          },
+          "skos:altLabel": [
+            {
+              "@value": "Journalism",
+              "@language": "en"
+            },
+            {
+              "@value": "Publishing",
+              "@language": "en"
+            },
+            {
+              "@value": "Broadcasting",
+              "@language": "en"
+            }
+          ],
+          "skos:definition": {
+            "@value": "Persons who gather, report, publish, disseminate, or analyze information through various media channels or information technologies",
+            "@language": "en"
+          },
+          "skos:scopeNote": {
+            "@value": "Includes journalists, publishers, editors, and others involved in the creation and dissemination of information through media",
+            "@language": "en"
+          }
+        }
+      ]
+    }
+  ]
+}

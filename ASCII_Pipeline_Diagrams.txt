@@ -1,0 +1,90 @@
+Entity Resolution Pipeline - ASCII Diagrams
+===========================================
+
+FULL RECTANGULAR LAYOUT:
+========================
+
+┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                   ENTITY RESOLUTION PIPELINE                                                       │
+└─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+INPUT                                                                                                         OUTPUT
+┌─────────────────┐                                                                                 ┌─────────────────┐
+│ Training Dataset│                                                                                 │     Results     │
+│  2,539 Records  │                                                                                 │ 99.55% Precision│
+│ 267 Identities  │                                                                                 │ 90.22% F1 Score │
+│ 81 Name Clusters│                                                                                 └─────────────────┘
+└─────────────────┘                                                                                           ▲
+         │                                                                                                     │
+         ▼                                                                                                     │
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│  PREPROCESSING  │───▶│    EMBEDDING    │───▶│ FEATURE ENGINEER│───▶│    TRAINING     │───▶│ CLASSIFICATION  │
+│                 │    │                 │    │                 │    │                 │    │                 │
+│ Data Extraction │    │   OpenAI API    │    │  5 Key Features │    │ Logistic Regr. │    │ Entity Matching │
+│ Deduplication   │    │  Weaviate DB    │    │ Similarity Calc │    │ Mini-batch SGD │    │ Confidence Score│
+│                 │    │ Vector Indexing │    │ Domain Classify │    │ Early Stopping  │    │   Clustering    │
+└─────────────────┘    └─────────────────┘    └─────────────────┘    └─────────────────┘    └─────────────────┘
+
+
+COMPACT VERSION:
+===============
+
+Training Dataset                                                                           Results
+(2,539 Records)                                                                      (99.55% Precision)
+      │                                                                                      ▲
+      ▼                                                                                      │
+┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────────────────────┐
+│PREPROCESS  │→ │ EMBEDDING  │→ │  FEATURE   │→ │  TRAINING  │→ │    CLASSIFICATION          │
+│            │  │            │  │ENGINEERING │  │            │  │                            │
+│Data Extract│  │OpenAI API  │  │5 Features  │  │Logistic    │  │Entity Matching             │
+│Deduplicate │  │Weaviate DB │  │Similarity  │  │Regression  │  │Confidence & Clustering     │
+└────────────┘  └────────────┘  └────────────┘  └────────────┘  └────────────────────────────┘
+
+
+DETAILED FLOW VERSION:
+=====================
+
+                         ENTITY RESOLUTION ML PIPELINE ARCHITECTURE
+                         
+INPUT DATA:                                                                          OUTPUT RESULTS:
+┌──────────────────┐                                                               ┌───────────────────┐
+│ Training Dataset │                                                               │ Classification    │
+│ • 2,539 Records  │                                                               │ • 99.55% Precision│
+│ • 267 Identities │                                                               │ • 90.22% F1 Score │
+│ • 81 Name Cluster│                                                               │ • Entity Clusters │
+└──────────────────┘                                                               └───────────────────┘
+         │                                                                                    ▲
+         └─────────────────────────────────────────────────────────────────────────────────┘
+                                         PIPELINE FLOW
+
+┌─────────────────┐       ┌─────────────────┐       ┌─────────────────┐       ┌─────────────────┐       ┌─────────────────┐
+│  PREPROCESSING  │  ──▶  │    EMBEDDING    │  ──▶  │FEATURE ENGINEER │  ──▶  │    TRAINING     │  ──▶  │ CLASSIFICATION  │
+├─────────────────┤       ├─────────────────┤       ├─────────────────┤       ├─────────────────┤       ├─────────────────┤
+│ • Data Extract  │       │ • OpenAI API    │       │ • 5 Key Features│       │ • Logistic Regr │       │ • Entity Match  │
+│ • Deduplication │       │ • Weaviate DB   │       │ • Similarity    │       │ • Mini-batch    │       │ • Confidence    │
+│                 │       │ • Vector Index  │       │ • Domain Class  │       │ • Early Stop    │       │ • Clustering    │
+└─────────────────┘       └─────────────────┘       └─────────────────┘       └─────────────────┘       └─────────────────┘
+
+
+SIMPLE LINEAR VERSION:
+=====================
+
+INPUT ──▶ PREPROCESS ──▶ EMBEDDING ──▶ FEATURES ──▶ TRAINING ──▶ CLASSIFICATION ──▶ OUTPUT
+2,539      Data Clean     OpenAI API    5 Features   Logistic    Entity Matching    99.55%
+Records    Deduplicate    Weaviate DB   Similarity   Regression  Confidence Score   Precision
+
+
+PRESENTATION SLIDE VERSION:
+==========================
+
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                         ENTITY RESOLUTION PIPELINE                                        │
+│                                                                                            │
+│  INPUT                PROCESSING STAGES                           OUTPUT                  │
+│  ┌─────────┐          ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐          ┌─────────┐            │
+│  │2,539    │   ──▶    │PREP  │▶│EMBED │▶│FEAT  │▶│TRAIN │   ──▶    │99.55%   │            │
+│  │Records  │          │      │ │      │ │      │ │      │          │Precision│            │
+│  │267 IDs  │          │Clean │ │OpenAI│ │5 Key │ │Logic │          │90.22%   │            │
+│  │81 Names │          │Dedup │ │Vector│ │Simil │ │Regr  │          │F1 Score │            │
+│  └─────────┘          └──────┘ └──────┘ └──────┘ └──────┘          └─────────┘            │
+└────────────────────────────────────────────────────────────────────────────────────────┘

@@ -1,0 +1,831 @@
+{
+  "schema_metadata": {
+    "version": "4.0.0",
+    "creation_date": "2025-04-15",
+    "classification_purpose": "entity_identity_resolution",
+    "last_updated": "2025-04-15",
+    "application_domain": "library_catalog_entities"
+  },
+  "domains": {
+    "arts_and_culture": {
+      "weight": 1.0,
+      "subdomains": {
+        "literature": {
+          "weight": 0.95,
+          "terms": [
+            {"term": "writer", "weight": 1.0},
+            {"term": "author", "weight": 1.0},
+            {"term": "poet", "weight": 0.9},
+            {"term": "playwright", "weight": 0.9},
+            {"term": "novelist", "weight": 0.9},
+            {"term": "editor", "weight": 0.9},
+            {"term": "translator", "weight": 0.85},
+            {"term": "essayist", "weight": 0.85},
+            {"term": "critic", "weight": 0.8},
+            {"term": "biographer", "weight": 0.8},
+            {"term": "literary", "weight": 0.8},
+            {"term": "literature", "weight": 0.8},
+            {"term": "poetry", "weight": 0.75},
+            {"term": "novel", "weight": 0.75},
+            {"term": "fiction", "weight": 0.75},
+            {"term": "drama", "weight": 0.7},
+            {"term": "poem", "weight": 0.7},
+            {"term": "anthology", "weight": 0.6},
+            {"term": "manuscript", "weight": 0.6},
+            {"term": "correspondence", "weight": 0.6},
+            {"term": "letters", "weight": 0.6},
+            {"term": "memoir", "weight": 0.6}
+          ],
+          "identity_markers": [
+            "writer", 
+            "author", 
+            "poet", 
+            "playwright", 
+            "novelist", 
+            "editor", 
+            "translator", 
+            "critic", 
+            "essayist", 
+            "biographer", 
+            "contributor"
+          ],
+          "role_categories": {
+            "CREATOR": ["writer", "author", "poet", "playwright", "novelist"],
+            "CONTRIBUTOR": ["editor", "translator", "critic", "contributor"]
+          }
+        },
+        "visual_arts": {
+          "weight": 0.95,
+          "terms": [
+            {"term": "artist", "weight": 1.0},
+            {"term": "painter", "weight": 0.9},
+            {"term": "sculptor", "weight": 0.9},
+            {"term": "photographer", "weight": 0.85},
+            {"term": "printmaker", "weight": 0.85},
+            {"term": "illustrator", "weight": 0.85},
+            {"term": "engraver", "weight": 0.85},
+            {"term": "designer", "weight": 0.85},
+            {"term": "book designer", "weight": 0.95},
+            {"term": "painting", "weight": 0.75},
+            {"term": "sculpture", "weight": 0.75},
+            {"term": "gallery", "weight": 0.7},
+            {"term": "exhibition", "weight": 0.7},
+            {"term": "portrait", "weight": 0.6},
+            {"term": "drawing", "weight": 0.6},
+            {"term": "art", "weight": 0.65},
+            {"term": "visual", "weight": 0.6},
+            {"term": "ceramic", "weight": 0.6},
+            {"term": "collection", "weight": 0.5},
+            {"term": "lithograph", "weight": 0.6},
+            {"term": "etching", "weight": 0.6},
+            {"term": "watercolor", "weight": 0.6}
+          ],
+          "identity_markers": [
+            "artist", 
+            "painter", 
+            "sculptor", 
+            "photographer", 
+            "printmaker", 
+            "illustrator", 
+            "engraver", 
+            "designer", 
+            "book designer"
+          ],
+          "role_categories": {
+            "CREATOR": ["artist", "painter", "sculptor", "photographer", "printmaker"],
+            "CONTRIBUTOR": ["illustrator", "designer"],
+            "PRODUCER": ["book designer", "engraver"]
+          }
+        },
+        "music": {
+          "weight": 0.95,
+          "terms": [
+            {"term": "composer", "weight": 1.0},
+            {"term": "musician", "weight": 0.9},
+            {"term": "conductor", "weight": 0.9},
+            {"term": "pianist", "weight": 0.85},
+            {"term": "violinist", "weight": 0.85},
+            {"term": "performer", "weight": 0.85},
+            {"term": "instrumentalist", "weight": 0.85},
+            {"term": "singer", "weight": 0.85},
+            {"term": "orchestra", "weight": 0.7},
+            {"term": "symphony", "weight": 0.7},
+            {"term": "opera", "weight": 0.7},
+            {"term": "sonata", "weight": 0.6},
+            {"term": "concert", "weight": 0.6},
+            {"term": "musical", "weight": 0.6},
+            {"term": "quartet", "weight": 0.6},
+            {"term": "trio", "weight": 0.6},
+            {"term": "recital", "weight": 0.6},
+            {"term": "lyricist", "weight": 0.8}
+          ],
+          "identity_markers": [
+            "composer", 
+            "musician", 
+            "conductor", 
+            "pianist", 
+            "violinist", 
+            "performer", 
+            "instrumentalist", 
+            "singer", 
+            "lyricist"
+          ],
+          "role_categories": {
+            "CREATOR": ["composer", "lyricist"],
+            "CONTRIBUTOR": ["musician", "performer", "instrumentalist", "singer"],
+            "PRODUCER": ["conductor"]
+          }
+        },
+        "performing_arts": {
+          "weight": 0.9,
+          "terms": [
+            {"term": "actor", "weight": 1.0},
+            {"term": "actress", "weight": 1.0},
+            {"term": "director", "weight": 0.9},
+            {"term": "choreographer", "weight": 0.9},
+            {"term": "dancer", "weight": 0.9},
+            {"term": "costume designer", "weight": 0.85},
+            {"term": "theater", "weight": 0.8},
+            {"term": "cinema", "weight": 0.8},
+            {"term": "film", "weight": 0.8},
+            {"term": "stage", "weight": 0.7},
+            {"term": "drama", "weight": 0.7},
+            {"term": "performance", "weight": 0.7},
+            {"term": "comedy", "weight": 0.6},
+            {"term": "tragedy", "weight": 0.6}
+          ],
+          "identity_markers": [
+            "actor", 
+            "actress", 
+            "director", 
+            "choreographer", 
+            "dancer", 
+            "costume designer"
+          ],
+          "role_categories": {
+            "CREATOR": ["choreographer"],
+            "CONTRIBUTOR": ["actor", "actress", "dancer"],
+            "PRODUCER": ["director", "costume designer"]
+          }
+        },
+        "publishing_and_printing": {
+          "weight": 0.95,
+          "terms": [
+            {"term": "publisher", "weight": 1.0},
+            {"term": "printer", "weight": 1.0},
+            {"term": "book designer", "weight": 1.0},
+            {"term": "typographer", "weight": 0.9},
+            {"term": "bookbinder", "weight": 0.9},
+            {"term": "lithographer", "weight": 0.9},
+            {"term": "letterpress", "weight": 0.8},
+            {"term": "printing", "weight": 0.8},
+            {"term": "typesetting", "weight": 0.8},
+            {"term": "binding", "weight": 0.7},
+            {"term": "edition", "weight": 0.7},
+            {"term": "publication", "weight": 0.7},
+            {"term": "imprint", "weight": 0.7},
+            {"term": "prospectus", "weight": 0.7},
+            {"term": "press", "weight": 0.7},
+            {"term": "type", "weight": 0.6},
+            {"term": "typography", "weight": 0.6},
+            {"term": "illustration", "weight": 0.6},
+            {"term": "broadside", "weight": 0.6},
+            {"term": "fine press", "weight": 0.7},
+            {"term": "limited edition", "weight": 0.7}
+          ],
+          "identity_markers": [
+            "publisher",
+            "printer",
+            "book designer",
+            "typographer",
+            "bookbinder",
+            "lithographer",
+            "associated person"
+          ],
+          "role_categories": {
+            "PRODUCER": ["publisher", "printer", "book designer", "typographer", "bookbinder", "lithographer"],
+            "PROVENANCE": ["associated person"]
+          }
+        }
+      }
+    },
+    "sciences_and_knowledge": {
+      "weight": 1.0,
+      "subdomains": {
+        "natural_sciences": {
+          "weight": 0.95,
+          "terms": [
+            {"term": "scientist", "weight": 1.0},
+            {"term": "physicist", "weight": 0.95},
+            {"term": "chemist", "weight": 0.95},
+            {"term": "biologist", "weight": 0.95},
+            {"term": "astronomer", "weight": 0.95},
+            {"term": "astrophysicist", "weight": 0.95},
+            {"term": "geologist", "weight": 0.9},
+            {"term": "botanist", "weight": 0.9},
+            {"term": "zoologist", "weight": 0.9},
+            {"term": "researcher", "weight": 0.9},
+            {"term": "scientific", "weight": 0.8},
+            {"term": "physics", "weight": 0.8},
+            {"term": "chemistry", "weight": 0.8},
+            {"term": "biology", "weight": 0.8},
+            {"term": "astronomy", "weight": 0.8},
+            {"term": "laboratory", "weight": 0.75},
+            {"term": "experiment", "weight": 0.75},
+            {"term": "discovery", "weight": 0.7},
+            {"term": "theory", "weight": 0.7},
+            {"term": "mathematics", "weight": 0.8},
+            {"term": "mathematician", "weight": 0.95},
+            {"term": "naturalist", "weight": 0.9}
+          ],
+          "identity_markers": [
+            "scientist", 
+            "physicist", 
+            "chemist", 
+            "biologist", 
+            "astronomer", 
+            "astrophysicist", 
+            "geologist", 
+            "botanist", 
+            "zoologist", 
+            "mathematician",
+            "researcher",
+            "naturalist"
+          ],
+          "role_categories": {
+            "CREATOR": ["scientist", "physicist", "chemist", "biologist", "astronomer", "astrophysicist", "geologist", "botanist", "zoologist", "mathematician", "naturalist"],
+            "CONTRIBUTOR": ["researcher"]
+          }
+        },
+        "applied_sciences": {
+          "weight": 0.95,
+          "terms": [
+            {"term": "engineer", "weight": 1.0},
+            {"term": "inventor", "weight": 0.95},
+            {"term": "technologist", "weight": 0.95},
+            {"term": "architect", "weight": 0.9},
+            {"term": "developer", "weight": 0.9},
+            {"term": "technician", "weight": 0.9},
+            {"term": "engineering", "weight": 0.85},
+            {"term": "technology", "weight": 0.85},
+            {"term": "mechanical", "weight": 0.8},
+            {"term": "electrical", "weight": 0.8},
+            {"term": "industrial", "weight": 0.8},
+            {"term": "computing", "weight": 0.8},
+            {"term": "robotics", "weight": 0.75},
+            {"term": "construction", "weight": 0.75},
+            {"term": "innovation", "weight": 0.7},
+            {"term": "patent", "weight": 0.7},
+            {"term": "prototype", "weight": 0.7}
+          ],
+          "identity_markers": [
+            "engineer", 
+            "inventor", 
+            "technologist", 
+            "architect", 
+            "developer", 
+            "technician"
+          ],
+          "role_categories": {
+            "CREATOR": ["inventor", "architect"],
+            "CONTRIBUTOR": ["engineer", "technologist", "developer"],
+            "PRODUCER": ["technician"]
+          }
+        },
+        "medicine_and_health": {
+          "weight": 0.95,
+          "terms": [
+            {"term": "physician", "weight": 1.0},
+            {"term": "doctor", "weight": 1.0},
+            {"term": "surgeon", "weight": 0.95},
+            {"term": "nurse", "weight": 0.95},
+            {"term": "pharmacist", "weight": 0.9},
+            {"term": "epidemiologist", "weight": 0.9},
+            {"term": "psychiatrist", "weight": 0.9},
+            {"term": "immunologist", "weight": 0.9},
+            {"term": "medical", "weight": 0.85},
+            {"term": "medicine", "weight": 0.85},
+            {"term": "health", "weight": 0.8},
+            {"term": "anatomy", "weight": 0.8},
+            {"term": "physiology", "weight": 0.8},
+            {"term": "clinical", "weight": 0.75},
+            {"term": "pharmacology", "weight": 0.75},
+            {"term": "disease", "weight": 0.7},
+            {"term": "treatment", "weight": 0.7},
+            {"term": "diagnosis", "weight": 0.7},
+            {"term": "patient", "weight": 0.7},
+            {"term": "therapy", "weight": 0.7}
+          ],
+          "identity_markers": [
+            "physician", 
+            "doctor", 
+            "surgeon", 
+            "nurse", 
+            "pharmacist", 
+            "epidemiologist", 
+            "psychiatrist", 
+            "immunologist"
+          ],
+          "role_categories": {
+            "CREATOR": ["physician", "doctor", "surgeon", "psychiatrist", "epidemiologist", "immunologist"],
+            "CONTRIBUTOR": ["nurse", "pharmacist"]
+          }
+        }
+      }
+    },
+    "humanities_and_thought": {
+      "weight": 1.0,
+      "subdomains": {
+        "philosophy_and_religion": {
+          "weight": 0.95,
+          "terms": [
+            {"term": "philosopher", "weight": 1.0},
+            {"term": "theologian", "weight": 1.0},
+            {"term": "cleric", "weight": 0.95},
+            {"term": "priest", "weight": 0.95},
+            {"term": "rabbi", "weight": 0.95},
+            {"term": "imam", "weight": 0.95},
+            {"term": "minister", "weight": 0.95},
+            {"term": "pastor", "weight": 0.95},
+            {"term": "bishop", "weight": 0.95},
+            {"term": "cardinal", "weight": 0.95},
+            {"term": "monk", "weight": 0.9},
+            {"term": "nun", "weight": 0.9},
+            {"term": "spiritual", "weight": 0.85},
+            {"term": "religious", "weight": 0.85},
+            {"term": "philosophy", "weight": 0.85},
+            {"term": "religion", "weight": 0.85},
+            {"term": "theology", "weight": 0.85},
+            {"term": "ethics", "weight": 0.8},
+            {"term": "metaphysics", "weight": 0.8},
+            {"term": "logic", "weight": 0.8},
+            {"term": "epistemology", "weight": 0.8},
+            {"term": "doctrine", "weight": 0.75},
+            {"term": "sacred", "weight": 0.75},
+            {"term": "divine", "weight": 0.75},
+            {"term": "church", "weight": 0.75}
+          ],
+          "identity_markers": [
+            "philosopher", 
+            "theologian", 
+            "cleric", 
+            "priest", 
+            "rabbi", 
+            "imam", 
+            "minister", 
+            "pastor", 
+            "bishop", 
+            "cardinal", 
+            "monk", 
+            "nun"
+          ],
+          "role_categories": {
+            "CREATOR": ["philosopher", "theologian"],
+            "CONTRIBUTOR": ["cleric", "priest", "rabbi", "imam", "minister", "pastor", "bishop", "cardinal", "monk", "nun"]
+          }
+        },
+        "historical_studies": {
+          "weight": 0.95,
+          "terms": [
+            {"term": "historian", "weight": 1.0},
+            {"term": "archaeologist", "weight": 1.0},
+            {"term": "archivist", "weight": 0.9},
+            {"term": "paleographer", "weight": 0.9},
+            {"term": "genealogist", "weight": 0.9},
+            {"term": "anthropologist", "weight": 0.9},
+            {"term": "curator", "weight": 0.9},
+            {"term": "history", "weight": 0.85},
+            {"term": "archaeology", "weight": 0.85},
+            {"term": "anthropology", "weight": 0.85},
+            {"term": "ancient", "weight": 0.8},
+            {"term": "medieval", "weight": 0.8},
+            {"term": "renaissance", "weight": 0.8},
+            {"term": "modern", "weight": 0.8},
+            {"term": "civilization", "weight": 0.75},
+            {"term": "culture", "weight": 0.75},
+            {"term": "heritage", "weight": 0.75},
+            {"term": "artifact", "weight": 0.75},
+            {"term": "chronology", "weight": 0.7},
+            {"term": "genealogy", "weight": 0.7},
+            {"term": "dynasty", "weight": 0.7},
+            {"term": "empire", "weight": 0.7}
+          ],
+          "identity_markers": [
+            "historian", 
+            "archaeologist", 
+            "archivist", 
+            "paleographer", 
+            "genealogist", 
+            "anthropologist", 
+            "curator"
+          ],
+          "role_categories": {
+            "CREATOR": ["historian", "archaeologist", "anthropologist"],
+            "CONTRIBUTOR": ["paleographer", "genealogist"],
+            "PROVENANCE": ["archivist", "curator"]
+          }
+        },
+        "linguistics_and_languages": {
+          "weight": 0.9,
+          "terms": [
+            {"term": "linguist", "weight": 1.0},
+            {"term": "philologist", "weight": 0.95},
+            {"term": "lexicographer", "weight": 0.95},
+            {"term": "grammarian", "weight": 0.9},
+            {"term": "translator", "weight": 0.9},
+            {"term": "interpreter", "weight": 0.9},
+            {"term": "language", "weight": 0.85},
+            {"term": "linguistics", "weight": 0.85},
+            {"term": "philology", "weight": 0.85},
+            {"term": "etymology", "weight": 0.8},
+            {"term": "semantics", "weight": 0.8},
+            {"term": "syntax", "weight": 0.8},
+            {"term": "grammar", "weight": 0.8},
+            {"term": "lexicon", "weight": 0.8},
+            {"term": "vocabulary", "weight": 0.75},
+            {"term": "dialect", "weight": 0.75},
+            {"term": "translation", "weight": 0.75}
+          ],
+          "identity_markers": [
+            "linguist", 
+            "philologist", 
+            "lexicographer", 
+            "grammarian", 
+            "translator", 
+            "interpreter"
+          ],
+          "role_categories": {
+            "CREATOR": ["linguist", "philologist", "lexicographer", "grammarian"],
+            "CONTRIBUTOR": ["translator", "interpreter"]
+          }
+        },
+        "classics_and_ancient_studies": {
+          "weight": 0.9,
+          "terms": [
+            {"term": "classicist", "weight": 1.0},
+            {"term": "ancient", "weight": 0.9},
+            {"term": "classical", "weight": 0.9},
+            {"term": "greco-roman", "weight": 0.9},
+            {"term": "latin", "weight": 0.85},
+            {"term": "greek", "weight": 0.85},
+            {"term": "roman", "weight": 0.85},
+            {"term": "hellenistic", "weight": 0.8},
+            {"term": "epic", "weight": 0.8},
+            {"term": "classics", "weight": 0.8},
+            {"term": "mythology", "weight": 0.75},
+            {"term": "antiquity", "weight": 0.75},
+            {"term": "ancient history", "weight": 0.75},
+            {"term": "philology", "weight": 0.7},
+            {"term": "epigraphy", "weight": 0.7},
+            {"term": "papyrology", "weight": 0.7}
+          ],
+          "identity_markers": [
+            "classicist",
+            "ancient historian",
+            "classical scholar",
+            "papyrologist",
+            "epigrapher",
+            "antiquarian"
+          ],
+          "role_categories": {
+            "CREATOR": ["classicist", "ancient historian", "classical scholar"],
+            "CONTRIBUTOR": ["papyrologist", "epigrapher", "antiquarian"]
+          }
+        }
+      }
+    },
+    "society_and_governance": {
+      "weight": 1.0,
+      "subdomains": {
+        "political_and_legal": {
+          "weight": 0.95,
+          "terms": [
+            {"term": "politician", "weight": 1.0},
+            {"term": "diplomat", "weight": 1.0},
+            {"term": "statesman", "weight": 1.0},
+            {"term": "lawyer", "weight": 1.0},
+            {"term": "judge", "weight": 1.0},
+            {"term": "legislator", "weight": 0.95},
+            {"term": "president", "weight": 0.95},
+            {"term": "prime minister", "weight": 0.95},
+            {"term": "governor", "weight": 0.95},
+            {"term": "senator", "weight": 0.95},
+            {"term": "representative", "weight": 0.95},
+            {"term": "ambassador", "weight": 0.95},
+            {"term": "attorney", "weight": 0.95},
+            {"term": "solicitor", "weight": 0.95},
+            {"term": "barrister", "weight": 0.95},
+            {"term": "justice", "weight": 0.95},
+            {"term": "government", "weight": 0.85},
+            {"term": "politics", "weight": 0.85},
+            {"term": "policy", "weight": 0.8},
+            {"term": "administration", "weight": 0.8},
+            {"term": "legislation", "weight": 0.8},
+            {"term": "law", "weight": 0.85},
+            {"term": "legal", "weight": 0.85}
+          ],
+          "identity_markers": [
+            "politician", 
+            "diplomat", 
+            "statesman", 
+            "lawyer", 
+            "judge", 
+            "legislator", 
+            "president", 
+            "prime minister", 
+            "governor", 
+            "senator", 
+            "representative", 
+            "ambassador", 
+            "attorney", 
+            "solicitor", 
+            "barrister", 
+            "justice"
+          ],
+          "role_categories": {
+            "CREATOR": ["president", "prime minister", "governor", "senator", "representative", "legislator"],
+            "CONTRIBUTOR": ["politician", "statesman", "diplomat", "ambassador"],
+            "SUBJECT": ["lawyer", "judge", "attorney", "solicitor", "barrister", "justice"]
+          }
+        },
+        "education_and_academia": {
+          "weight": 0.95,
+          "terms": [
+            {"term": "educator", "weight": 1.0},
+            {"term": "professor", "weight": 1.0},
+            {"term": "teacher", "weight": 1.0},
+            {"term": "scholar", "weight": 0.95},
+            {"term": "academic", "weight": 0.95},
+            {"term": "lecturer", "weight": 0.95},
+            {"term": "researcher", "weight": 0.95},
+            {"term": "dean", "weight": 0.95},
+            {"term": "principal", "weight": 0.95},
+            {"term": "headmaster", "weight": 0.95},
+            {"term": "education", "weight": 0.85},
+            {"term": "teaching", "weight": 0.85},
+            {"term": "scholarship", "weight": 0.85},
+            {"term": "research", "weight": 0.85},
+            {"term": "pedagogy", "weight": 0.8},
+            {"term": "curriculum", "weight": 0.8},
+            {"term": "university", "weight": 0.8},
+            {"term": "college", "weight": 0.8},
+            {"term": "faculty", "weight": 0.75}
+          ],
+          "identity_markers": [
+            "educator", 
+            "professor", 
+            "teacher", 
+            "scholar", 
+            "academic", 
+            "lecturer", 
+            "dean", 
+            "principal", 
+            "headmaster"
+          ],
+          "role_categories": {
+            "CREATOR": ["professor", "scholar", "academic", "researcher"],
+            "CONTRIBUTOR": ["educator", "teacher", "lecturer"],
+            "PRODUCER": ["dean", "principal", "headmaster"]
+          }
+        },
+        "economics_and_business": {
+          "weight": 0.9,
+          "terms": [
+            {"term": "economist", "weight": 1.0},
+            {"term": "banker", "weight": 0.95},
+            {"term": "entrepreneur", "weight": 0.95},
+            {"term": "businessman", "weight": 0.95},
+            {"term": "businesswoman", "weight": 0.95},
+            {"term": "executive", "weight": 0.95},
+            {"term": "financier", "weight": 0.95},
+            {"term": "merchant", "weight": 0.9},
+            {"term": "industrialist", "weight": 0.9},
+            {"term": "investor", "weight": 0.9},
+            {"term": "economics", "weight": 0.85},
+            {"term": "finance", "weight": 0.85},
+            {"term": "business", "weight": 0.85},
+            {"term": "industry", "weight": 0.85},
+            {"term": "commerce", "weight": 0.85},
+            {"term": "trade", "weight": 0.85},
+            {"term": "market", "weight": 0.8},
+            {"term": "economy", "weight": 0.8}
+          ],
+          "identity_markers": [
+            "economist", 
+            "banker", 
+            "entrepreneur", 
+            "businessman", 
+            "businesswoman", 
+            "executive", 
+            "financier", 
+            "merchant", 
+            "industrialist"
+          ],
+          "role_categories": {
+            "CREATOR": ["economist", "entrepreneur"],
+            "CONTRIBUTOR": ["businessman", "businesswoman", "executive"],
+            "PRODUCER": ["banker", "financier", "merchant", "industrialist", "investor"]
+          }
+        }
+      }
+    }
+  },
+  "relationship_taxonomy": {
+    "CREATOR": {
+      "description": "Entity responsible for intellectual/artistic creation",
+      "roles": [
+        "author", "composer", "artist", "playwright", "poet", "novelist", 
+        "writer", "sculptor", "photographer", "choreographer", "director"
+      ],
+      "vector_weighting": {
+        "entity_name": 0.7,
+        "entity_role": 0.2,
+        "content_context": 0.1
+      },
+      "domain_bias": "role_dominant",
+      "classification_strategy": "identity_first"
+    },
+    "CONTRIBUTOR": {
+      "description": "Entity contributing to content without primary authorship",
+      "roles": [
+        "editor", "translator", "illustrator", "compiler", "contributor", 
+        "annotator", "transcriber", "commentator"
+      ],
+      "vector_weighting": {
+        "entity_name": 0.4,
+        "entity_role": 0.4,
+        "content_context": 0.2
+      },
+      "domain_bias": "balanced",
+      "classification_strategy": "role_weighted"
+    },
+    "PRODUCER": {
+      "description": "Entity responsible for physical manifestation or distribution",
+      "roles": [
+        "publisher", "printer", "book designer", "typographer", "bookbinder",
+        "distributor", "manufacturer", "lithographer", "press"
+      ],
+      "vector_weighting": {
+        "entity_name": 0.3,
+        "entity_role": 0.5,
+        "content_context": 0.2
+      },
+      "domain_bias": "production_focused",
+      "classification_strategy": "medium_first"
+    },
+    "SUBJECT": {
+      "description": "Entity that is the topic or subject of the content",
+      "roles": [
+        "subject", "about", "depicted", "discussed", "analyzed",
+        "referenced", "portrayed", "biographical subject"
+      ],
+      "vector_weighting": {
+        "entity_name": 0.2,
+        "entity_role": 0.1,
+        "content_context": 0.7
+      },
+      "domain_bias": "content_dominant",
+      "classification_strategy": "context_first"
+    },
+    "PROVENANCE": {
+      "description": "Entity associated with the object's history or ownership",
+      "roles": [
+        "associated person", "former owner", "collector", "donor", 
+        "provenance", "custodian", "collection", "ex libris"
+      ],
+      "vector_weighting": {
+        "entity_name": 0.3,
+        "entity_role": 0.3,
+        "content_context": 0.4
+      },
+      "domain_bias": "neutral",
+      "classification_strategy": "association_based"
+    }
+  },
+  "domain_classification_strategies": {
+    "identity_first": {
+      "description": "Prioritize role and identity markers for classification",
+      "vector_similarity_threshold": 0.85,
+      "role_weight_multiplier": 1.8,
+      "identity_marker_multiplier": 1.5,
+      "context_weight_factor": 0.7
+    },
+    "context_weighted": {
+      "description": "Balance identity with contextual information",
+      "vector_similarity_threshold": 0.75,
+      "role_weight_multiplier": 1.2,
+      "identity_marker_multiplier": 1.3,
+      "context_weight_factor": 1.1
+    },
+    "context_dominant": {
+      "description": "Prioritize contextual information over identity",
+      "vector_similarity_threshold": 0.7,
+      "role_weight_multiplier": 0.9,
+      "identity_marker_multiplier": 0.8,
+      "context_weight_factor": 1.5
+    },
+    "historical_entity": {
+      "description": "Special treatment for historical entities",
+      "vector_similarity_threshold": 0.8,
+      "role_weight_multiplier": 1.5,
+      "identity_marker_multiplier": 1.4,
+      "context_weight_factor": 0.9,
+      "historical_threshold_year": 1900,
+      "era_specific_adjustments": {
+        "pre_1700": 1.3,
+        "1700_1850": 1.2, 
+        "1850_1950": 1.1
+      }
+    }
+  },
+  "resolution_strategies": {
+    "top_results_inference": {
+      "description": "Infer domain from top vector search results",
+      "top_k": 5,
+      "minimum_similarity_threshold": 0.7,
+      "weighted_voting": true,
+      "implementation": "Use weighted voting across top results to determine domain"
+    },
+    "role_based_classification": {
+      "description": "Apply different strategies based on role type",
+      "creator_strategy": "identity_first",
+      "contributor_strategy": "context_weighted",
+      "producer_strategy": "context_weighted",
+      "subject_strategy": "context_dominant",
+      "provenance_strategy": "context_dominant",
+      "implementation": "Apply different weights based on entity role category"
+    },
+    "temporal_contextualization": {
+      "description": "Adjust classification based on historical period",
+      "implementation": "Apply era-specific adjustments based on birth year",
+      "default_strategy": "identity_first",
+      "historical_strategy": "historical_entity"
+    },
+    "special_collection_handling": {
+      "description": "Special handling for specific collection contexts",
+      "autograph_collection_weight": 1.2,
+      "manuscript_collection_weight": 1.3,
+      "implementation": "Apply specialized weighting for special collection materials"
+    }
+  },
+  "library_catalog_mappings": {
+    "role_to_domain": {
+      "author": "arts_and_culture.literature",
+      "printer": "arts_and_culture.publishing_and_printing",
+      "publisher": "arts_and_culture.publishing_and_printing",
+      "book designer": "arts_and_culture.publishing_and_printing",
+      "associated person": "arts_and_culture.publishing_and_printing",
+      "contributor": "arts_and_culture.literature",
+      "illustrator": "arts_and_culture.visual_arts",
+      "photographer": "arts_and_culture.visual_arts",
+      "translator": "arts_and_culture.literature",
+      "editor": "arts_and_culture.literature"
+    },
+    "role_to_relationship_type": {
+      "author": "CREATOR",
+      "writer": "CREATOR",
+      "poet": "CREATOR",
+      "playwright": "CREATOR",
+      "novelist": "CREATOR",
+      "composer": "CREATOR",
+      "artist": "CREATOR",
+      "photographer": "CREATOR",
+      "sculptor": "CREATOR",
+      "choreographer": "CREATOR",
+      "editor": "CONTRIBUTOR",
+      "translator": "CONTRIBUTOR",
+      "illustrator": "CONTRIBUTOR",
+      "compiler": "CONTRIBUTOR",
+      "contributor": "CONTRIBUTOR",
+      "annotator": "CONTRIBUTOR",
+      "transcriber": "CONTRIBUTOR",
+      "commentator": "CONTRIBUTOR",
+      "printer": "PRODUCER",
+      "publisher": "PRODUCER",
+      "book designer": "PRODUCER",
+      "typographer": "PRODUCER",
+      "bookbinder": "PRODUCER",
+      "lithographer": "PRODUCER",
+      "distributor": "PRODUCER",
+      "subject": "SUBJECT",
+      "about": "SUBJECT",
+      "depicted": "SUBJECT",
+      "discussed": "SUBJECT",
+      "associated person": "PROVENANCE",
+      "former owner": "PROVENANCE",
+      "collector": "PROVENANCE",
+      "donor": "PROVENANCE",
+      "provenance": "PROVENANCE"
+    }
+  },
+  "vector_search_configuration": {
+    "similarity_metric": "cosine",
+    "minimum_similarity_threshold": 0.7,
+    "top_k_results": 5,
+    "weighted_aggregation": true,
+    "hybrid_search_settings": {
+      "keyword_weight": 0.3,
+      "vector_weight": 0.7
+    }
+  }
+}

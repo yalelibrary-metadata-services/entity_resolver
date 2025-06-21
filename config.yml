@@ -1,0 +1,302 @@
+# Entity Resolution Pipeline Configuration
+
+# Global Random Seed for Deterministic Behavior
+random_seed: 42
+
+# Directory Paths
+input_dir: "data/input"
+output_dir: "data/output"
+checkpoint_dir: "data/checkpoints"
+ground_truth_dir: "data/ground_truth"
+log_dir: "logs"
+
+# Taxonomy Configuration
+taxonomy_path: "data/input/revised_taxonomy_final.json"
+classified_data_path: "data/input/training_dataset_classified.csv"
+
+# Pipeline Configuration
+log_level: "INFO"
+debug_features: false
+embed_fields: ["composite", "person", "title", "roles", "marcKey"]
+skip_fields: ["attribution", "provision", "subjects", "genres", "relatedWork", "recordId", "personId"]
+
+# Entity Matching Enhancement Configuration
+entity_matching:
+  enhancement_aggressiveness: "aggressive"  # Options: none, minimal, moderate, aggressive
+
+# Enhanced Scaling Configuration
+use_enhanced_scaling: true
+scaling_config_path: "scaling_config.yml"
+
+# Resource Allocation
+preprocessing_workers: 4
+preprocessing_batch_size: 10
+embedding_workers: 4
+embedding_batch_size: 32
+embedding_checkpoint_batch: 1000
+feature_workers: 4
+feature_batch_size: 1000
+classification_workers: 8
+classification_batch_size: 500
+
+# File Names
+labeled_matches_file: "labeled_matches.csv"
+training_dataset_file: "training_dataset.csv"
+
+# OpenAI Embedding Configuration
+embedding_model: "text-embedding-3-small"
+embedding_dimensions: 1536
+max_tokens_per_minute: 5000000
+max_requests_per_minute: 10000
+
+# Weaviate Configuration
+weaviate_url: "http://localhost:8080"
+weaviate_timeout: 300      # Increased timeout (seconds)
+weaviate_batch_size: 100
+weaviate_ef: 128
+weaviate_max_connections: 64
+weaviate_ef_construction: 128
+weaviate_grpc_max_receive_size: 104857600  # 100MB for larger responses
+weaviate_connection_pool_size: 16        # Connection pooling
+weaviate_query_concurrent_limit: 4       # Limit concurrent queries
+
+# Enhanced Vector Search Configuration
+weaviate:
+  base_search_limit: 5000      # Starting point for candidate retrieval
+  max_retrieval_limit: 50000   # Maximum candidates for any single vector
+  batch_size: 10000            # Size of each batch for retrieval
+  enable_progressive_retrieval: false  # Enable multi-batch retrieval
+
+# Cluster Validation Configuration
+cluster_validation:
+  enabled: true                 # Enable cluster validation to improve precision
+  similarity_threshold: 0.50    # Decreased to allow more merging of clusters
+  coherence_threshold: 0.50     # Decreased to be more inclusive
+  small_cluster_threshold: 2    # Validate all clusters except pairs
+  min_cluster_size: 2           # Allow pairs to form clusters
+  adaptive_validation: true     # Automatically choose validation method based on cluster size
+  large_cluster_threshold: 1000  # Clusters larger than this use vector-based validation
+  use_vector_based_validation: true  # Whether to force vector-based validation for all clusters
+  use_composite_only_validation: true  # When true, only use composite field for centroid validation
+  use_parallel: true            # Whether to use parallel processing for validation
+  parallel_workers: 8           # Number of worker processes for parallel validation  
+  debug_problematic_pairs: true   # Enable debugging for problematic pairs (entities with low similarity)
+  debug_similarity_threshold: 0.60 # Adjusted to match new similarity threshold
+
+# Clustering Configuration
+clustering:
+  use_strict_clustering: false   # Enable strict clustering to prevent overmerging
+  min_edge_confidence: 0.75     # Minimum confidence required to follow an edge during clustering
+  require_multiple_connections: false  # If true, entities need multiple high-confidence connections
+  min_connections: 2            # Minimum number of connections required when require_multiple_connections is true
+
+# Similarity Thresholds - Moderately adjusted for balanced merging
+person_similarity_threshold: 0.70     # Moderately adjusted threshold
+title_similarity_threshold: 0.50      # Moderately adjusted threshold
+composite_similarity_threshold: 0.55  # Moderately adjusted threshold
+levenshtein_threshold: 0.6            # Original threshold
+vector_similarity_threshold: 0.7      # Original threshold
+
+# Classification Parameters
+learning_rate: 0.01
+max_iterations: 1000
+training_batch_size: 256
+convergence_threshold: 0.00001
+l2_lambda: 0.01
+class_weight: 5.0
+early_stopping_patience: 10
+decision_threshold: 0.65 #0.2778 #0.68  # Was 0.85 - Lowered to be more inclusive
+
+# GraphML Export Configuration
+graphml_export:
+  large_dataset_threshold: 5000  # Entity count threshold to switch to streaming approach
+  batch_size: 1000  # Number of nodes/edges to process in a single batch
+  sampling_threshold: 100000  # Entity count threshold to enable edge sampling
+  sampling_rate: 0.1  # Rate at which edges are sampled in very large clusters
+  use_sampling: true  # Enable/disable edge sampling for very large datasets
+
+# GRPC Tuning
+grpc_keepalive_time_ms: 60000  # 60 seconds
+grpc_keepalive_timeout_ms: 30000  # 30 seconds
+grpc_keepalive_without_calls: true
+grpc_http2_max_pings_without_data: 5
+
+# Feature Engineering Parameters
+features:
+  # Configure similarity metric selection
+  similarity_metrics:
+    use_binary_indicators: true        # If true, use binary indicators; if false, use direct similarity values
+    include_both_metrics: true        # If true, include both binary and direct metrics
+    
+  enabled:
+    #- person_low_levenshtein_indicator  # Binary indicator version (used when use_binary_indicators=true)
+    #- person_low_jaro_winkler_indicator # Binary indicator version (used when use_binary_indicators=true)
+    - person_cosine
+    #- person_low_cosine_indicator       # Binary indicator for cosine similarity
+    #- person_levenshtein_similarity     # Direct similarity version (used when use_binary_indicators=false)
+    #- person_jaro_winkler_similarity    # Direct similarity version (used when use_binary_indicators=false)
+    - person_title_squared
+    #- person_role_squared
+    - composite_cosine
+    - taxonomy_dissimilarity             # Domain-based dissimilarity from SetFit classification
+    #- composite_cosine_squared          # New squared version of composite cosine
+    #- marcKey_cosine
+    #- marcKey_title_squared             # New marcKey/title harmonic mean squared
+    #- roles_cosine
+    - birth_death_match
+    #- title_cosine_squared
+    #- title_role_adjusted
+    #- combined_person_title_role_adjusted
+    #- person_title_adjusted_squared
+  parameters:
+    # Binary indicator versions
+    person_low_levenshtein_indicator:
+      threshold: 0.60
+    person_low_jaro_winkler_indicator:
+      threshold: 0.90
+    person_low_cosine_indicator:
+      threshold: 0.80
+    
+    # Direct similarity versions
+    person_levenshtein_similarity:
+      weight: 2.0
+    person_jaro_winkler_similarity:
+      weight: 1.0
+    
+    # Cosine similarity features
+    person_cosine:
+      weight: 1.0
+      fallback_value: 0.5
+    
+    person_title_squared:
+      weight: 1.0
+    composite_cosine:
+      weight: 1.0
+    roles_cosine:
+      weight: 1.0
+    marcKey_cosine:
+      weight: 1.0
+    person_role_squared:
+      weight: 1.0
+    birth_death_match:
+      tolerance: 2
+      weight: 1.0
+    title_cosine_squared:
+      weight: 1.0
+    title_role_adjusted:
+      weight: 1.0
+      default_weight: 0.6
+    person_title_adjusted_squared:
+      weight: 1.2
+    marcKey_title_squared:
+      weight: 1.0
+    composite_cosine_squared:
+      weight: 1.0
+    taxonomy_dissimilarity:
+      weight: 0.5  # Reduced weight - same domain doesn't strongly indicate same person
+
+# Role Configuration for title_role_adjusted feature
+role_weights:
+  # Subject: person is the subject of the work
+  "Subject": 
+    "title": 0.5      # Titles moderately important for subjects
+  
+  # Associated: person has an unspecified association with the work
+  "Associated": 
+    "title": 0.4      # Titles less important for associated persons
+  
+  # Contributor: person contributed to the work in an unspecified way
+  "Contributor": 
+    "title": 0.8      # Titles more important for contributors
+  
+  # CreativeRole: catch-all for any specific creative role
+  "CreativeRole": 
+    "title": 0.9      # Titles highly important for creative roles
+
+# Role compatibility matrix for title_role_adjusted feature
+role_compatibility:
+  # Same roles are perfectly compatible
+  "Subject-Subject": 1.0
+  "Associated-Associated": 1.0
+  "Contributor-Contributor": 1.0
+  "CreativeRole-CreativeRole": 1.0
+  
+  # Cross-role compatibilities (revised to recognize Subject-Creator overlap)
+  "Subject-Associated": 0.4     # Subject and Associated are somewhat different
+  "Subject-Contributor": 0.9    # Subject and Contributor often same entity
+  "Subject-CreativeRole": 0.9   # Subject and CreativeRole often same entity
+  
+  # Associated has moderate compatibility with creative roles
+  "Associated-Contributor": 0.4
+  "Associated-CreativeRole": 0.4
+  
+  # Contributor and CreativeRole are highly compatible
+  "Contributor-CreativeRole": 0.9
+
+# Custom Feature Configuration
+custom_features:
+  # Example of a weighted field similarity feature
+  provision_similarity:
+    enabled: false    # Disabled by default
+    type: "weighted_field_similarity"
+    field: "provision"
+    weight: 0.5
+    power: 1.0
+  
+  # Example of a composite feature
+  combined_title_person:
+    enabled: false
+    type: "composite_feature"
+    components:
+      - "person_title_squared"
+      - "title_cosine_squared"
+    operation: "multiply"
+    weight: 1.5
+  
+  combined_person_title_role_adjusted:
+    enabled: false     # Enabled for testing
+    type: "composite_feature"
+    components:
+      #- "person_title_squared"      
+      #- "person_role_squared"
+      #- "roles_cosine"
+      #- "title_role_adjusted"
+      - "marcKey_cosine"
+      - "composite_cosine"
+      - "title_cosine_squared"
+    operation: "multiply"
+    weight: 1.0
+    
+# Feature Substitution Configuration
+feature_substitutions:
+  # Map custom features to core features that should be replaced
+  # When a custom feature is enabled, it will replace the specified core features
+  # This avoids having to calculate base features when they are only used in a custom feature
+  combined_person_title_role_adjusted:
+    replaces:
+      #- "person_title_squared"   # Replace this core feature
+      #- "person_role_squared" 
+      #- "roles_cosine"     
+      #- "title_role_adjusted"    # Also replace this core feature
+      - "title_cosine_squared"   # Also replace this core feature
+      - "marcKey_cosine"
+      
+  person_title_adjusted_squared:
+    replaces:
+      - "person_title_squared"   # Replace this core feature
+      - "title_role_adjusted"    # Also used within the calculation
+    
+      
+  #combined_title_person:
+  #  replaces:
+  #    - "title_cosine_squared"   # Replace this core feature when combined_title_person is enabled
+
+# Query Parameters
+query_limit: 100
+query_batch_size: 20
+
+# Cache Management
+disable_feature_caching: false
+string_cache_size: 100000
+vector_cache_size: 50000
+similarity_cache_size: 200000
