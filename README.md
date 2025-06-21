@@ -1,221 +1,220 @@
-# Entity Resolution Pipeline
+# Entity Resolution Pipeline for Yale University Library Catalog
 
-A production-ready system for identifying and resolving entities across MARC 21 records in the Yale University Library Catalog. The pipeline achieves **99.55% precision** and **82.48% recall** using feature engineering and logistic regression classification.
+A production-ready system for identifying and resolving person entities across MARC 21 library catalog records. The pipeline combines vector embeddings, feature engineering, and machine learning to achieve **99.55% precision** and **82.48% recall** on real library data.
 
-## Key Features
-
-- **High Performance**: 99.55% precision, 90.22% F1-score on real library catalog data
-- **Dual Classification**: Main entity resolution + SetFit hierarchical taxonomy classification  
-- **Production Ready**: Checkpointing, resumption, telemetry, error resilience
-- **Vector Database**: Weaviate integration with OpenAI embeddings
-- **Feature Engineering**: 5 similarity features with domain-specific scaling
-
-## Quick Start
+## 🚀 Quick Start
 
 ### Prerequisites
-
-- Python 3.10+ 
-- Docker and Docker Compose (for Weaviate)
-- OpenAI API key
+- Python 3.10+
+- Docker and Docker Compose (for Weaviate vector database)
+- OpenAI API key (for embeddings)
+- Anthropic API key (for individual record classification)
 
 ### Installation
-
-1. **Clone and setup environment**:
-   ```bash
-   git clone <repository-url>
-   cd entity_resolver
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   pip install -r requirements.txt
-   ```
-
-2. **Configure environment**:
-   ```bash
-   echo "OPENAI_API_KEY=your_openai_api_key_here" > .env
-   ```
-
-3. **Start Weaviate vector database**:
-   ```bash
-   docker-compose up -d weaviate
-   # Wait ~30 seconds for startup
-   curl http://localhost:8080/v1/.well-known/ready  # Check readiness
-   ```
-
-### Basic Usage
-
-**Run complete pipeline**:
 ```bash
-python main.py --config config.yml
+# Clone and setup environment
+git clone <repository-url>
+cd entity_resolver
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements.txt
+
+# Configure API keys
+echo "OPENAI_API_KEY=your_openai_api_key_here" > .env
+echo "ANTHROPIC_API_KEY=your_anthropic_api_key_here" >> .env
+
+# Start Weaviate vector database
+docker-compose up -d weaviate
+# Wait ~30 seconds for startup
+curl http://localhost:8080/v1/.well-known/ready  # Check readiness
 ```
 
-**Run specific stages**:
+### Basic Usage
 ```bash
-# Just preprocessing
-python main.py --start preprocessing --end preprocessing
+# Run complete pipeline
+python main.py --config config.yml
 
-# Training only  
-python main.py --start training --end training
+# Run specific stages
+python main.py --start preprocessing --end training
 
-# Resume from last completed stage
+# Resume from last checkpoint
 python main.py --resume
 
 # Check pipeline status
 python main.py --status
 ```
 
-**Stage control**:
-```bash
-# Reset and re-run specific stages
-python main.py --reset embedding_and_indexing training --start embedding_and_indexing
+## 📊 Performance Overview
 
-# Run with Docker Weaviate startup
-python main.py --docker
+### Production Results (14,930 test pairs)
+- **Precision**: 99.55% (extremely low false positive rate)
+- **Recall**: 82.48% (captures majority of true matches)
+- **F1-Score**: 90.22% (balanced performance)
+- **Specificity**: 98.43% (excellent negative class accuracy)
+
+### Computational Efficiency
+- **99.23% reduction** in pairwise comparisons through vector similarity
+- Processes 4,672 entities in 163 clusters with 83,921 comparisons
+- Optimized for high-volume library catalog processing
+
+## 🏗️ System Architecture
+
+### Dual Classification Approach
+
+The system implements two complementary classification pipelines:
+
+1. **Main Entity Resolution Pipeline**: Identifies matching person entities across catalog records
+2. **Individual Record Classification**: Classifies individual records into hierarchical taxonomy categories
+
+### Core Pipeline Stages
+
+```mermaid
+graph LR
+    A[Input CSV<br/>MARC Records] --> B[Preprocessing<br/>Hash Deduplication]
+    B --> C[Embedding & Indexing<br/>OpenAI + Weaviate]
+    C --> D[Training<br/>Feature Engineering]
+    D --> E[Classification<br/>Entity Matching]
+    E --> F[Reporting<br/>Results & Analysis]
+    
+    G[Individual Records] --> H[Parallel API<br/>Classification]
+    H --> I[SetFit Training<br/>Taxonomy Model]
+    I --> J[Hierarchical<br/>Categories]
 ```
 
-## Data Extraction (Pre-Pipeline)
+### Technology Stack
+- **Vector Database**: Weaviate with HNSW indexing
+- **Embeddings**: OpenAI text-embedding-3-small (1536 dimensions)
+- **ML Framework**: Custom logistic regression with gradient descent
+- **Taxonomy Classification**: SetFit (Sentence Transformers + logistic head)
+- **Parallel Processing**: asyncio/aiohttp for API rate limit optimization
 
-Before running the main pipeline, training datasets are generated using XQuery extraction from BIBFRAME catalog data.
+## 📋 Data Flow & Processing
 
-### BIBFRAME to CSV Conversion
+### Input Data Format
+The pipeline processes CSV files extracted from Yale University Library's BIBFRAME catalog:
 
-The entity resolution pipeline operates on CSV datasets extracted from Yale University Library's BIBFRAME catalog using:
-
-**XQuery Script**: `extract-names-benchmark-2024-12-16-csv.xq`
-- **Input**: BIBFRAME RDF/XML (converted from MARC21 catalog records)
-- **Query Engine**: BaseX database with XQuery 4.0
-- **Output**: CSV datasets with composite text fields optimized for embedding
-
-**Key Processing Steps**:
-1. **Authority Control**: Filters for Library of Congress authority records (excludes non-LC except FAST, SWD, GND)
-2. **Entity Extraction**: Processes both Contributors (creators/editors) and Subjects (people as topics)
-3. **Metadata Assembly**: Combines person names, roles, titles, subjects, and publication details
-4. **Composite Text Generation**: Creates multi-line text fields optimized for semantic embedding
-
-**Sample BIBFRAME Input**:
-```xml
-<bf:Work>
-  <bf:contribution>
-    <bf:Contribution>
-      <bf:agent>
-        <bf:Agent rdf:type="http://id.loc.gov/ontologies/bibframe/Person">
-          <rdfs:label>Bach, Johann Sebastian, 1685-1750</rdfs:label>
-          <bflc:marcKey>1001 $aBach, Johann Sebastian,$d1685-1750.</bflc:marcKey>
-        </bf:Agent>
-      </bf:agent>
-      <bf:role rdf:resource="http://id.loc.gov/vocabulary/relators/cmp"/>
-    </bf:Contribution>
-  </bf:contribution>
-</bf:Work>
-```
-
-**Generated CSV Output**:
 ```csv
-composite,person,roles,title,attribution,provision,subjects,genres,relatedWork,recordId,personId
+composite,person,roles,title,provision,subjects,personId,setfit_prediction,is_parent_category
 "Contributor: Bach, Johann Sebastian, 1685-1750
 Title: The Well-Tempered Clavier
 Attribution: edited by Johann Sebastian Bach
 Subjects: Keyboard music; Fugues
-Genres: Musical scores
-Provision information: Leipzig: Breitkopf & Härtel, 1985","Bach, Johann Sebastian, 1685-1750",Composer,The Well-Tempered Clavier,edited by Johann Sebastian Bach,"Leipzig: Breitkopf & Härtel, 1985","Keyboard music; Fugues",Musical scores,,12345,12345#Agent100-1
+Provision information: Leipzig: Breitkopf & Härtel, 1985","Bach, Johann Sebastian, 1685-1750",Composer,The Well-Tempered Clavier,"Leipzig: Breitkopf & Härtel, 1985","Keyboard music; Fugues",12345#Agent700-1,Music and Sound Arts,FALSE
 ```
 
-**Note**: This data extraction step is performed separately from the main pipeline and generates the input CSV files used in Stage 1 (Preprocessing).
+### Data Extraction Process
+Pre-pipeline data preparation uses XQuery extraction from BIBFRAME catalog data:
 
-## Architecture Overview
+- **Input**: BIBFRAME RDF/XML (converted from MARC21)
+- **Processing**: Authority control, entity extraction, metadata assembly  
+- **Output**: CSV datasets optimized for semantic embedding
 
-The pipeline implements a **five-stage architecture**:
+## 🔧 Pipeline Stages Deep Dive
 
+### 1. Preprocessing (`src/preprocessing.py`)
+- **Purpose**: Clean and deduplicate input data
+- **Key Operations**: 
+  - MD5-based hash deduplication
+  - String frequency analysis
+  - Field mapping and lookup table creation
+- **Output**: Hash mappings, string dictionaries, field relationships
+
+### 2. Embedding & Indexing (`src/embedding_and_indexing.py`)
+- **Purpose**: Generate vector embeddings and index in vector database
+- **Features**:
+  - OpenAI text-embedding-3-small (1536D) embeddings
+  - Weaviate vector database with HNSW indexing
+  - Batch processing with rate limiting and retry logic
+- **Output**: Searchable vector index for similarity matching
+
+### 3. Training (`src/training.py`)
+- **Purpose**: Train logistic regression classifier on labeled entity pairs
+- **Algorithm**: Custom gradient descent with L2 regularization
+- **Features**: 5 engineered similarity features with domain-specific scaling
+- **Configuration**: 
+  - Learning rate: 0.01
+  - Batch size: 256
+  - Class weighting: 5:1 (positive:negative)
+  - Early stopping with validation monitoring
+
+### 4. Classification (`src/classifying.py`)
+- **Purpose**: Apply trained model to identify entity matches
+- **Features**:
+  - Batch processing with configurable batch sizes
+  - Transitive clustering for entity groups
+  - Confidence scoring and threshold application
+  - Memory management and telemetry collection
+
+### 5. Reporting (`src/reporting.py`)
+- **Purpose**: Generate comprehensive analysis and visualizations
+- **Outputs**:
+  - Interactive HTML dashboards
+  - Detailed CSV exports with feature analysis
+  - Performance visualizations (ROC curves, feature importance)
+  - Error analysis and diagnostic reports
+
+## 🎯 Feature Engineering System
+
+### Active Features (5 total)
+1. **person_cosine**: Cosine similarity between person name embeddings
+2. **person_title_squared**: Squared person-title interaction term  
+3. **composite_cosine**: Full record composite similarity
+4. **taxonomy_dissimilarity**: SetFit domain classification differences
+5. **birth_death_match**: Binary temporal matching with tolerance
+
+### Feature Scaling Architecture
+- **Feature Groups**: Domain-specific percentile normalization
+  - Person features: 98th percentile scaling
+  - Title features: 95th percentile scaling  
+  - Context features: 90th percentile scaling
+  - Binary features: Preserved as exact 0.0/1.0 values
+- **Consistency**: Identical scaling between training and production
+
+### Known Issues & Improvements
+⚠️ **Analysis revealed that 2 of 5 features are currently inactive:**
+- `taxonomy_dissimilarity`: Always returns 0.0 (should provide domain-based discrimination)
+- `birth_death_match`: Always returns 0.0 (should catch temporal inconsistencies)
+
+**Impact**: Pipeline achieves 99.55% precision with only 3 active features, suggesting significant improvement potential when inactive features are fixed.
+
+## 🔄 Individual Record Classification
+
+### Parallel Processing System
+The system includes a separate pipeline for classifying individual catalog records:
+
+```bash
+# Parallel classification optimized for API rate limits
+python scripts/verify_individual_classifications_parallel.py \
+    --csv data/input/training_dataset.csv \
+    --taxonomy data/input/revised_taxonomy_final.json \
+    --output data/output/parallel_classifications.json \
+    --concurrency 5 \
+    --rate-limit-rpm 4000
 ```
-Input (MARC CSV) → Preprocessing → Embedding & Indexing → Training → Classification → Reporting
-```
 
-### Pipeline Stages
-
-1. **Preprocessing** (`src/preprocessing.py`)
-   - Parses MARC 21 CSV records
-   - MD5-based deduplication and hash lookup creation
-   - String frequency analysis
-
-2. **Embedding & Indexing** (`src/embedding_and_indexing.py`)  
-   - OpenAI `text-embedding-3-small` (1536D) embeddings
-   - Weaviate vector database with HNSW indexing
-   - Batch processing with rate limiting
-
-3. **Training** (`src/training.py`)
-   - Logistic regression with gradient descent
-   - Feature engineering (5 features)
-   - Class weighting (5:1) and L2 regularization
-
-4. **Classification** (`src/classifying.py`)
-   - Entity matching across full dataset
-   - Transitive clustering and confidence scoring
-   - Batch processing with telemetry
-
-5. **Reporting** (`src/reporting.py`)
-   - Interactive HTML dashboards with parameter correlation analysis
-   - Detailed CSV exports with raw/normalized features and diagnostics
-   - Feature importance visualizations and structured logging
-   - Diagnostics for binary indicator anomalies
-
-## Data Format
-
-### Input CSV Structure
-```csv
-composite,person,roles,title,provision,subjects,personId,setfit_prediction,is_parent_category
-"Contributor: Bach, Johann Sebastian...",Bach\, Johann Sebastian,Contributor,The Well-Tempered Clavier,...,...,...,12345#Agent700-1,Music and Sound Arts,FALSE
-```
-
-### Ground Truth Format
-```csv
-left,right,match
-16044091#Agent700-32,9356808#Agent100-11,true
-16044091#Agent700-32,9940747#Hub240-13-Agent,true
-```
-
-## Feature Engineering
-
-### Feature Engineering
-
-**Currently enabled features**:
-- `person_cosine`: Cosine similarity between person name embeddings
-- `person_title_squared`: Squared person-title interaction term
-- `composite_cosine`: Full record composite similarity  
-- `taxonomy_dissimilarity`: SetFit domain classification dissimilarity
-- `birth_death_match`: Binary birth/death year matching with tolerance
-
-### Scaling System
-
-The pipeline includes feature scaling with:
-- **Feature groups**: Different scaling for person, title, context, and binary features
-- **Percentile-based**: 90th-98th percentile normalization by feature type
-- **Binary preservation**: Maintains exact 0.0/1.0 values for binary indicators
-- **Training/production consistency**: Identical scaling in both environments
+### Features
+- **Anthropic Claude API integration** with rate limiting
+- **Token usage analysis** and automatic concurrency adjustment
+- **Progress tracking** with detailed logging
+- **Incremental saving** for long-running classifications
+- **Error resilience** with retry logic and fallback handling
 
 ### SetFit Integration
+Hierarchical taxonomy classification using SetFit models:
 
-**Hierarchical taxonomy classification** (`setfit/` directory):
-- Handles extreme class imbalance (< 8 examples → parent mapping)  
-- GPU support (CUDA, MPS, CPU)
-- Used for `taxonomy_dissimilarity` feature
-
-**Training SetFit classifier**:
 ```bash
+# Train SetFit classifier for domain categorization
 python setfit/train_setfit_classifier.py \
     --csv_path data/input/training_dataset.csv \
     --ground_truth_path data/output/updated_identity_classification_map_v6_pruned.json \
     --output_dir ./setfit_model_output
 ```
 
-## Configuration
+## 🛠️ Configuration & Customization
 
 ### Main Configuration (`config.yml`)
-
-Key settings:
 ```yaml
-# Deterministic processing
-random_seed: 42
-
-# Resource allocation  
+# Resource allocation
 preprocessing_workers: 4
 embedding_batch_size: 32
 classification_workers: 8
@@ -231,124 +230,92 @@ features:
            "taxonomy_dissimilarity", "birth_death_match"]
 ```
 
-### Scaling Configuration (`scaling_config.yml`)
+### Feature Configuration
+Easily enable/disable features and adjust parameters:
+```yaml
+features:
+  parameters:
+    person_cosine:
+      weight: 1.0
+      fallback_value: 0.5
+    birth_death_match:
+      tolerance: 2
+      weight: 1.0
+```
 
-Feature group definitions:
+### Scaling Configuration (`scaling_config.yml`)
 ```yaml
 feature_groups:
   person_features: ["person_cosine"]        # 98th percentile
-  title_features: ["person_title_squared"]  # 95th percentile
-  context_features: ["composite_cosine"]    # 90th percentile  
+  title_features: ["person_title_squared"]  # 95th percentile  
+  context_features: ["composite_cosine"]    # 90th percentile
   binary_features: ["birth_death_match"]    # No scaling
 ```
 
-## Production Features
+## 🔍 Production Features
 
-### Checkpointing and Resumption
-- **Persistent state**: Each stage saves checkpoints for resumption
-- **Resume capability**: `python main.py --resume`
-- **Status monitoring**: `python main.py --status`
-- **Selective reset**: `python main.py --reset training classifying`
-
-### Error Resilience
-- Comprehensive exception handling with fallback strategies
-- Retry logic with exponential backoff (Tenacity)
-- Memory management and garbage collection
-- Thread-safe caching with versioning
-
-### Monitoring and Telemetry
-- Detailed performance metrics collection
-- Memory usage monitoring (psutil)
-- Progress tracking (tqdm) 
-- Configurable logging levels
-- Transaction ID tracking for debugging
-
-## Performance Results
-
-**Latest Test Results (2025-06-05)**:
-- **Test Size**: 14,930 entity pairs
-- **Precision**: 99.55% (9,955 TP, 45 FP)
-- **Recall**: 82.48% (2,114 FN out of 12,069 true matches)
-- **F1 Score**: 90.22%
-- **Accuracy**: 85.54%
-- **Specificity**: 98.43%
-
-The system achieves high precision with controlled recall, suitable for library catalog entity resolution where false positives are costly.
-
-### Detailed Reporting Output
-
-The reporting system generates comprehensive analysis including:
-
-**Test Results Analysis** (`detailed_test_results_{timestamp}.csv`):
-- Raw and normalized feature values for each test pair (`raw_` and `norm_` prefixes)
-- Prediction confidence scores and correctness classification
-- TP/FP/TN/FN categorization for each prediction
-
-**Diagnostics** (`problematic_indicators_{timestamp}.json`):
-- Detection of binary indicator anomalies (e.g., identical strings with incorrect indicator values)
-- Feature engineering diagnostics and cache analysis
-- Systematic quality assurance for feature calculation
-
-**Interactive Dashboard** (`configuration_dashboard.html`):
-- Parameter correlation analysis for optimization
-- Performance metric trends across configurations
-- Visual exploration of feature importance and model behavior
-
-## Directory Structure
-
-```
-entity_resolver/
-├── main.py                                    # CLI entry point
-├── extract-names-benchmark-2024-12-16-csv.xq # XQuery BIBFRAME data extraction
-├── config.yml                                 # Main configuration
-├── scaling_config.yml                         # Feature scaling configuration
-├── docker-compose.yml                         # Weaviate Docker setup
-├── requirements.txt                           # Python dependencies
-├── src/                                       # Core pipeline modules
-│   ├── orchestrating.py                      # Pipeline orchestration
-│   ├── preprocessing.py                      # CSV processing and deduplication
-│   ├── embedding_and_indexing.py             # OpenAI + Weaviate integration
-│   ├── feature_engineering.py                # Feature calculation and caching
-│   ├── training.py                           # Logistic regression training
-│   ├── classifying.py                        # Entity matching and clustering
-│   ├── reporting.py                          # Results and visualization
-│   ├── scaling_bridge.py                     # Feature scaling interface
-│   └── utils.py                              # Utilities and helpers
-├── setfit/                                    # SetFit taxonomy classifier
-│   ├── train_setfit_classifier.py            # SetFit model training
-│   ├── predict_setfit_classifier.py          # SetFit classification
-│   └── SETFIT_README.md                      # SetFit documentation
-├── data/
-│   ├── input/                                 # Raw datasets and taxonomies
-│   │   ├── training_dataset_classified.csv           # Extracted + classified data
-│   │   ├── training_dataset_classified_2025-06-17.csv # Updated classifications
-│   │   └── revised_taxonomy_final.json               # SetFit taxonomy structure
-│   ├── checkpoints/                           # Pipeline state persistence
-│   ├── output/                                # Results, reports, visualizations
-│   │   ├── detailed_test_results_*.csv               # Complete prediction analysis
-│   │   ├── test_summary_*.json                       # Performance metrics
-│   │   ├── problematic_indicators_*.json             # Binary feature diagnostics
-│   │   ├── feature_importance_*.png                  # Model weight visualizations
-│   │   ├── configuration_dashboard.html              # Interactive analysis dashboard
-│   │   ├── configuration_results.jsonl              # Structured optimization logs
-│   │   └── setfit_prediction_discrepancy_report.csv  # Classification changes analysis
-│   └── ground_truth/                          # Labeled entity pairs
-│       └── labeled_matches.csv               # Training pairs (left,right,match)
-└── logs/                                      # Pipeline execution logs
-```
-
-## Docker Deployment
-
-### Option 1: Docker Compose (Recommended)
+### Checkpoint & Resumption System
+- **Complete state persistence** for all pipeline stages
+- **Resumption capability**: Continue from any point of failure
+- **Selective reset**: Reset and re-run specific stages only
 
 ```bash
-# Build the pipeline image
-docker build -t entity-resolver .
+# Resume from last successful checkpoint
+python main.py --resume
 
-# Start Weaviate
+# Check current pipeline status
+python main.py --status
+
+# Reset specific stages and continue
+python main.py --reset training classifying --start training
+```
+
+### Error Resilience & Monitoring
+- **Comprehensive exception handling** with graceful degradation
+- **Retry logic** with exponential backoff (using Tenacity library)
+- **Memory usage monitoring** and garbage collection
+- **Detailed telemetry** collection and performance metrics
+- **Transaction ID tracking** for multi-threaded debugging
+
+### Performance Optimization
+- **Batch processing** with configurable worker allocation
+- **Vector similarity optimization** reducing comparisons by 99.23%
+- **Connection pooling** for vector database operations
+- **Progressive candidate retrieval** for large datasets
+
+## 📈 Results & Analysis
+
+### Test Results Analysis
+Recent analysis of false positive patterns reveals:
+- **Primary cause**: Very similar person names (high cosine similarity)
+- **Secondary factor**: Similar composite text content
+- **Confidence range**: 87.02% - 92.02% for false positives
+- **Improvement opportunity**: Activating taxonomy and temporal features
+
+### Visualization & Reporting
+The system generates comprehensive analysis including:
+- **Interactive HTML dashboards** with parameter correlation analysis
+- **Feature importance visualizations** using actual model weights
+- **ROC/PR curves** for individual feature performance
+- **Confusion matrices** with detailed classification metrics
+- **Error pattern analysis** for systematic improvement
+
+### Performance Metrics
+```
+Precision: 99.55% (9,955 TP, 45 FP)
+Recall: 82.48% (2,114 FN, 9,955 TP)  
+F1-Score: 90.22%
+Accuracy: 85.54%
+Specificity: 98.43%
+```
+
+## 🚀 Advanced Usage
+
+### Docker Deployment
+```bash
+# Complete Docker setup
 docker-compose up -d weaviate
-
-# Run pipeline
+docker build -t entity-resolver .
 docker run --rm --network host \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/config.yml:/app/config.yml \
@@ -356,22 +323,37 @@ docker run --rm --network host \
   entity-resolver python main.py --config config.yml
 ```
 
-### Option 2: Local Development
+### Custom Feature Development
+Add new features by implementing the feature interface:
 
-```bash
-# Start Weaviate only
-docker-compose up -d weaviate
+```python
+# In src/custom_features.py
+def register_custom_features(feature_engineering, config):
+    feature_engineering.register_feature('my_feature', my_feature_func)
 
-# Run pipeline locally
-source venv/bin/activate
-python main.py --config config.yml
+# Enable in config.yml
+features:
+  enabled: [..., "my_feature"]
 ```
 
-## Troubleshooting
+### Performance Tuning
+Optimize for your hardware and dataset:
+
+```yaml
+# Batch processing optimization
+embedding_batch_size: 32     # Adjust based on API limits
+classification_batch_size: 500  # Adjust based on memory
+
+# Weaviate optimization  
+weaviate_ef: 128            # Higher = better search quality
+weaviate_max_connections: 64 # Higher = more connected graph
+```
+
+## 🔧 Troubleshooting
 
 ### Common Issues
 
-**Weaviate Connection**:
+**Weaviate Connection Problems**:
 ```bash
 # Check Weaviate status
 docker-compose ps
@@ -379,112 +361,70 @@ docker-compose logs weaviate
 curl http://localhost:8080/v1/.well-known/ready
 ```
 
-**OpenAI API Issues**:
-- Verify API key: `echo $OPENAI_API_KEY`
-- Check rate limits in OpenAI dashboard
-- Monitor logs for API-related errors
+**API Rate Limiting**:
+- Monitor API usage in provider dashboards
+- Adjust concurrency settings in configuration
+- Use `--dry-run` flag for testing without API calls
 
 **Memory Issues**:
-- Reduce batch sizes in `config.yml`
+- Reduce batch sizes in configuration
 - Increase Docker memory limits
 - Monitor with `python main.py --status`
 
 **Pipeline Failures**:
 - Check logs in `data/logs/pipeline.log`
-- Use `--start` and `--end` for problematic stages
+- Use stage-specific execution: `--start <stage> --end <stage>`
 - Enable debug logging: Set `log_level: DEBUG` in config
 
-### Performance Optimization
+### Performance Optimization Tips
 
-**Batch Processing**:
-- Adjust `embedding_batch_size` (default: 32)
-- Tune `classification_batch_size` (default: 500)
-- Balance workers vs batch size for your hardware
+1. **Batch Size Tuning**: Balance API limits vs. throughput
+2. **Worker Allocation**: Match CPU cores for optimal parallelization  
+3. **Vector Database**: Tune HNSW parameters for your data characteristics
+4. **Memory Management**: Configure garbage collection for long-running processes
 
-**Weaviate Tuning**:
-```yaml
-# In docker-compose.yml
-VECTOR_INDEX_EF: 128           # Higher = better search quality
-VECTOR_INDEX_EFCONSTRUCTION: 128  # Higher = better index quality  
-VECTOR_INDEX_MAXCONNECTIONS: 64   # Higher = more connected graph
-```
+## 📚 Documentation
 
-**Resource Allocation**:
-```yaml
-# In config.yml
-embedding_workers: 4           # Parallel embedding generation
-classification_workers: 8     # Parallel classification  
-feature_workers: 4            # Parallel feature calculation
-```
+### Additional Resources
+- **[project_structure.md](project_structure.md)**: Detailed project structure and file organization
+- **[setfit/SETFIT_README.md](setfit/SETFIT_README.md)**: SetFit taxonomy classification system
+- **[CLAUDE.md](CLAUDE.md)**: Project instructions and dataset structure
+- **Performance Reports**: Interactive HTML dashboards in `data/output/reports/`
 
-## Development
+### API Reference
+Key classes and their responsibilities:
+- `PipelineOrchestrator`: Main pipeline coordination and stage management
+- `FeatureEngineering`: Feature calculation with caching and versioning
+- `EntityClassifier`: Logistic regression training with gradient descent
+- `EntityClassification`: Entity matching and transitive clustering
+- `ScalingBridge`: Feature scaling coordination across environments
 
-### Adding Custom Features
+## 🤝 Contributing
 
-1. **Register feature function**:
-   ```python
-   # In src/custom_features.py
-   def register_custom_features(feature_engineering, config):
-       feature_engineering.register_feature('my_feature', my_feature_func)
-   ```
+### Development Workflow
+1. **Setup**: Follow installation instructions with development dependencies
+2. **Testing**: Use small test datasets for feature development
+3. **Documentation**: Update relevant documentation for any changes
+4. **Performance**: Run full pipeline tests before major changes
 
-2. **Enable in configuration**:
-   ```yaml
-   # In config.yml
-   features:
-     enabled: [..., "my_feature"]
-   ```
+### Code Standards
+- Follow existing code patterns and documentation styles
+- Implement comprehensive error handling and logging
+- Include performance considerations for large-scale processing
+- Maintain backward compatibility for configuration files
 
-### Running Tests
-
-```bash
-# Unit tests (if available)
-pytest tests/
-
-# Integration testing with small dataset
-python main.py --config test_config.yml
-```
-
-### Extending the Pipeline
-
-**New Pipeline Stage**:
-1. Add stage function in `src/orchestrating.py`
-2. Update `self.stages` list
-3. Implement reset logic in `_reset_stage()`
-
-**Alternative Scaling Strategy**:
-1. Implement new scaler in `src/robust_scaler.py`
-2. Add to `ScalingStrategy` enum in `src/scaling_bridge.py`
-3. Configure in `scaling_config.yml`
-
-## API Reference
-
-### Key Classes
-
-- `PipelineOrchestrator`: Main pipeline coordination
-- `FeatureEngineering`: Feature calculation and caching
-- `EntityClassifier`: Logistic regression training
-- `EntityClassification`: Entity matching and clustering
-- `ScalingBridge`: Feature scaling coordination
-
-### Configuration Options
-
-See `config.yml` for complete parameter documentation with defaults and descriptions.
-
-## License
+## 📄 License
 
 [License information to be added]
 
-## Citation
+## 📞 Support & Contact
 
-If you use this entity resolution pipeline in your research, please cite:
-
-```
-[Citation information to be added]
-```
+**Issues**: Report bugs and feature requests via GitHub issues  
+**Documentation**: See additional documentation in the `/docs` directory  
+**Performance**: Use built-in telemetry and reporting for optimization guidance
 
 ---
 
-**Contact**: [Contact information to be added]
+**Project Status**: Production-ready entity resolution system with comprehensive tooling for analysis, debugging, and performance optimization.
 
-**Repository**: [GitHub URL to be added]
+**Last Updated**: June 2025
