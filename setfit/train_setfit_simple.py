@@ -58,32 +58,10 @@ class SimpleHierarchicalClassifier:
         print(f"\nTotal classes affected: {len(self.rare_classes)}")
         return df
     
-    def subsample_training_data(self, train_df, max_samples_per_class=80):
-        """Subsample training data to avoid memory issues."""
-        print(f"\nSubsampling training data (max {max_samples_per_class} per class)...")
-        
-        # Count samples per class
-        class_counts = train_df['hierarchical_label'].value_counts()
-        print(f"Original sizes: {dict(class_counts)}")
-        
-        # Subsample each class
-        subsampled_dfs = []
-        for label in train_df['hierarchical_label'].unique():
-            class_df = train_df[train_df['hierarchical_label'] == label]
-            if len(class_df) > max_samples_per_class:
-                class_df = class_df.sample(n=max_samples_per_class, random_state=42)
-            subsampled_dfs.append(class_df)
-        
-        subsampled_df = pd.concat(subsampled_dfs, ignore_index=True)
-        
-        print(f"Reduced from {len(train_df)} to {len(subsampled_df)} total samples")
-        new_counts = subsampled_df['hierarchical_label'].value_counts()
-        print(f"New sizes: {dict(new_counts)}")
-        
-        return subsampled_df
+    # Subsampling removed - not needed with 2,539 high-quality records
     
     def train(self, train_df, val_df, model_name="sentence-transformers/paraphrase-mpnet-base-v2",
-              batch_size=8, num_epochs=3, max_samples_per_class=80):
+              batch_size=8, num_epochs=3):
         """Train SetFit model with simple, working settings."""
         
         # Apply hierarchical mapping
@@ -91,9 +69,8 @@ class SimpleHierarchicalClassifier:
         val_df = val_df.copy()
         val_df['hierarchical_label'] = val_df['label'].map(self.label_mapping)
         
-        # Subsample if needed
-        if len(train_df) > 800:
-            train_df = self.subsample_training_data(train_df, max_samples_per_class)
+        # Using full dataset - 2,539 high-quality records with proper label distribution
+        print(f"\nUsing full training set: {len(train_df)} samples")
         
         # Clear GPU cache
         if torch.cuda.is_available():
@@ -248,32 +225,41 @@ class SimpleHierarchicalClassifier:
         print(f"Model saved to {output_path}")
 
 
-def load_entity_data(csv_path, ground_truth_path):
-    """Load entity data and merge with ground truth labels."""
+def load_entity_data(csv_path, classifications_path):
+    """Load entity data and merge with parallel classifications (first label only)."""
     df = pd.read_csv(csv_path)
     print(f"Loaded {len(df)} entities from CSV")
     
-    with open(ground_truth_path, 'r') as f:
-        ground_truth = json.load(f)
+    with open(classifications_path, 'r') as f:
+        classifications = json.load(f)
     
     identity_to_label = {}
     identity_to_path = {}
     
-    for person_id, info in ground_truth.items():
+    # Extract only the FIRST label/path from each classification
+    for person_id, info in classifications.items():
         if 'label' in info and len(info['label']) > 0:
-            identity_to_label[person_id] = info['label'][0]
+            identity_to_label[person_id] = info['label'][0]  # First label only
             if 'path' in info and len(info['path']) > 0:
-                identity_to_path[person_id] = info['path'][0]
+                identity_to_path[person_id] = info['path'][0]  # First path only
     
     df['label'] = df['personId'].astype(str).map(identity_to_label)
     df['path'] = df['personId'].astype(str).map(identity_to_path)
     
     df_labeled = df.dropna(subset=['label']).copy()
-    print(f"Found labels for {len(df_labeled)} entities")
+    print(f"Found labels for {len(df_labeled)} entities (using first label only)")
     
     df_labeled['parent_category'] = df_labeled['path'].apply(
         lambda x: x.split(' > ')[0] if pd.notna(x) else None
     )
+    
+    # Show label distribution
+    label_counts = df_labeled['label'].value_counts()
+    print(f"\nLabel distribution ({len(label_counts)} unique labels):")
+    for label, count in label_counts.head(10).items():
+        print(f"  {label}: {count}")
+    if len(label_counts) > 10:
+        print(f"  ... and {len(label_counts) - 10} more")
     
     return df_labeled
 
@@ -282,12 +268,12 @@ def main():
     parser = argparse.ArgumentParser(description='Simple SetFit training that works')
     parser.add_argument('--csv_path', type=str, required=True,
                         help='Path to CSV file with entity data')
-    parser.add_argument('--ground_truth_path', type=str, required=True,
-                        help='Path to JSON file with ground truth labels')
+    parser.add_argument('--classifications_path', type=str, required=True,
+                        help='Path to JSON file with parallel classifications')
     parser.add_argument('--output_dir', type=str, default='./setfit_model_output',
                         help='Directory to save trained model')
     parser.add_argument('--model_name', type=str, 
-                        default='sentence-transformers/paraphrase-multilingual-mpnet-base-v2',
+                        default='sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2',
                         help='Pre-trained model name')
     parser.add_argument('--min_examples', type=int, default=8,
                         help='Minimum examples per class')
@@ -295,8 +281,7 @@ def main():
                         help='Number of training epochs')
     parser.add_argument('--batch_size', type=int, default=8,
                         help='Batch size (keep small: 4, 6, 8)')
-    parser.add_argument('--max_samples_per_class', type=int, default=80,
-                        help='Maximum samples per class')
+    # Removed --max_samples_per_class - no longer needed without subsampling
     parser.add_argument('--test_size', type=float, default=0.2,
                         help='Test set proportion')
     parser.add_argument('--val_size', type=float, default=0.2,
@@ -324,7 +309,7 @@ def main():
     
     # Load data
     print("\nLoading data...")
-    df = load_entity_data(args.csv_path, args.ground_truth_path)
+    df = load_entity_data(args.csv_path, args.classifications_path)
     
     # Split data
     train_val_df, test_df = train_test_split(
@@ -343,7 +328,7 @@ def main():
         model_name=args.model_name,
         batch_size=args.batch_size,
         num_epochs=args.epochs,
-        max_samples_per_class=args.max_samples_per_class
+        # No subsampling parameters needed
     )
     
     # Evaluate
