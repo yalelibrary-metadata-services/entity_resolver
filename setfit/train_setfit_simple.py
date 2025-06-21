@@ -259,14 +259,14 @@ def load_entity_data(csv_path, ground_truth_path):
     identity_to_label = {}
     identity_to_path = {}
     
-    for identity, info in ground_truth.items():
+    for person_id, info in ground_truth.items():
         if 'label' in info and len(info['label']) > 0:
-            identity_to_label[identity] = info['label'][0]
+            identity_to_label[person_id] = info['label'][0]
             if 'path' in info and len(info['path']) > 0:
-                identity_to_path[identity] = info['path'][0]
+                identity_to_path[person_id] = info['path'][0]
     
-    df['label'] = df['identity'].astype(str).map(identity_to_label)
-    df['path'] = df['identity'].astype(str).map(identity_to_path)
+    df['label'] = df['personId'].astype(str).map(identity_to_label)
+    df['path'] = df['personId'].astype(str).map(identity_to_path)
     
     df_labeled = df.dropna(subset=['label']).copy()
     print(f"Found labels for {len(df_labeled)} entities")
