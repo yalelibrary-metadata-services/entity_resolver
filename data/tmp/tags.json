@@ -1,0 +1,130 @@
+[
+  {
+    "610":1455026,
+    "type": ["Group"]
+  },
+  {
+    "650":20612514,
+    "type": ["Type"]
+  },
+  {
+    "651":4260166,
+    "type": ["Place"]
+  },
+  {
+    "700":6990478,
+    "type": ["Person"] 
+  },
+  {
+    "700|3 |": 294,
+    "type": ["Group"]
+  },
+  {
+    "100":7646109,
+    "type": ["Person"] 
+  },
+  {
+    "100|3 |": 591,
+    "type": ["Group"]
+  },
+  {
+    "692":482222,
+    "type": ["Person"]
+  },
+  {
+    "710":3745080,
+    "type": ["Group"]
+  },
+  {
+    "110":1425819,
+    "type": ["Group"]
+  },
+  {
+    "240": 594611,
+    "type": ["LinguisticObject"]
+  },
+  {
+    "810":386240,
+    "type": ["Group", "LinguisticObject"]
+  },
+  {
+    "600":2624004,
+    "type": ["Person"]
+  },
+  {
+    "600|3 |": 37949,
+    "type": ["Group"]
+  },
+  {
+    "690":187299,
+    "type": ["Type"]
+  },
+  {
+    "830":3050090,
+    "type": ["LinguisticObject"]
+  },
+  {
+    "111":114417,
+    "type": ["Activity"]
+  },
+  {
+    "800":59862,
+    "type": ["Person", "LinguisticObject"]
+  },
+  {
+    "730":2199160,
+    "type": ["LinguisticObject"]
+  },
+  {
+    "630":419261,
+    "type": ["LinguisticObject"]
+  },
+  {
+    "130":382772,
+    "type": ["LinguisticObject"]
+  },
+  {
+    "693":48660,
+    "type": ["Group"] 
+  },
+  {
+    "711":48956,
+    "type": ["Activity"]
+  },
+  {
+    "655":2502350,
+    "type": ["Type"]
+  },
+  {
+    "611":42986,
+    "type": ["Activity"]
+  },
+  {
+    "811":1468,
+    "type": ["Activity", "LinguisticObject"]
+  },
+  {
+    "695":84261,
+    "type": ["LinguisticObject"]
+  },
+  {
+    "691":35390,
+    "type": ["Place"]
+  },
+  {
+    "694":153,
+    "type": ["Activity"]
+  },
+  {
+    "656":10796,
+    "type": ["Type"]
+  },
+  {
+    "751":268,
+    "type": ["Place"]
+  },
+  {
+    "657":327424,
+    "type": ["Type"]
+  }
+]
