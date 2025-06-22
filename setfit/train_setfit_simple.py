@@ -33,29 +33,19 @@ class SimpleHierarchicalClassifier:
         self.rare_classes = set()
         
     def create_label_hierarchy(self, df):
-        """Create hierarchical label mapping based on class counts."""
-        # Store parent mapping
+        """No hierarchical mapping needed with minimum-aware splitting."""
+        # Store parent mapping for metadata only
         for idx, row in df.iterrows():
-            self.parent_mapping[row['label']] = row['parent_category']
+            if pd.notna(row['parent_category']):
+                self.parent_mapping[row['label']] = row['parent_category']
         
-        # Count examples per class
-        class_counts = df['label'].value_counts()
+        # Use original labels - no mapping needed
+        for label in df['label'].unique():
+            self.label_mapping[label] = label
         
-        # Determine which classes need parent fallback
-        print("\nHierarchical mapping:")
-        for label, count in class_counts.items():
-            if count < self.min_examples_threshold:
-                parent = self.parent_mapping[label]
-                self.label_mapping[label] = parent
-                self.rare_classes.add(label)
-                print(f"  {label} ({count} examples) -> {parent}")
-            else:
-                self.label_mapping[label] = label
+        df['hierarchical_label'] = df['label']  # Keep all original labels
         
-        # Create new column with hierarchical labels
-        df['hierarchical_label'] = df['label'].map(self.label_mapping)
-        
-        print(f"\nTotal classes affected: {len(self.rare_classes)}")
+        print(f"\nUsing all original labels: {len(df['label'].unique())} classes")
         return df
     
     # Subsampling removed - not needed with 2,539 high-quality records
@@ -311,12 +301,74 @@ def main():
     print("\nLoading data...")
     df = load_entity_data(args.csv_path, args.classifications_path)
     
-    # Split data
-    train_val_df, test_df = train_test_split(
-        df, test_size=args.test_size, stratify=df['label'], random_state=args.seed
-    )
-    train_df, val_df = train_test_split(
-        train_val_df, test_size=args.val_size, stratify=train_val_df['label'], random_state=args.seed
+    # Minimum-aware split ensuring each class gets adequate training examples
+    def minimum_aware_split(df, min_train_examples=8, test_size=0.2, val_size=0.2, random_state=42):
+        """Split ensuring minimum training examples per class."""
+        
+        class_counts = df['label'].value_counts()
+        print(f"\nClass distribution:")
+        for label, count in class_counts.items():
+            print(f"  {label}: {count}")
+        
+        train_dfs = []
+        val_dfs = []
+        test_dfs = []
+        
+        print(f"\nSplitting with minimum {min_train_examples} training examples per class:")
+        
+        for label, total_count in class_counts.items():
+            class_df = df[df['label'] == label].sample(frac=1, random_state=random_state)  # Shuffle
+            
+            if total_count < min_train_examples:
+                # Too few examples - put all in training
+                train_dfs.append(class_df)
+                print(f"  {label}: {total_count} total -> {total_count} train, 0 val, 0 test (insufficient for split)")
+            else:
+                # Ensure minimum training examples, split remainder
+                train_portion = class_df.iloc[:min_train_examples]
+                remaining = class_df.iloc[min_train_examples:]
+                
+                if len(remaining) == 0:
+                    # Exactly minimum examples
+                    train_dfs.append(train_portion)
+                    print(f"  {label}: {total_count} total -> {len(train_portion)} train, 0 val, 0 test")
+                elif len(remaining) == 1:
+                    # One extra - give to val
+                    train_dfs.append(train_portion)
+                    val_dfs.append(remaining)
+                    print(f"  {label}: {total_count} total -> {len(train_portion)} train, 1 val, 0 test")
+                elif len(remaining) == 2:
+                    # Two extra - one each to val and test
+                    train_dfs.append(train_portion)
+                    val_dfs.append(remaining.iloc[[0]])
+                    test_dfs.append(remaining.iloc[[1]])
+                    print(f"  {label}: {total_count} total -> {len(train_portion)} train, 1 val, 1 test")
+                else:
+                    # More than 2 extra - split remainder proportionally
+                    remaining_test_size = max(1, int(len(remaining) * test_size))
+                    remaining_val_size = max(1, int((len(remaining) - remaining_test_size) * val_size))
+                    
+                    test_portion = remaining.iloc[:remaining_test_size]
+                    val_portion = remaining.iloc[remaining_test_size:remaining_test_size + remaining_val_size]
+                    extra_train = remaining.iloc[remaining_test_size + remaining_val_size:]
+                    
+                    train_dfs.append(pd.concat([train_portion, extra_train]))
+                    val_dfs.append(val_portion)
+                    test_dfs.append(test_portion)
+                    
+                    final_train = len(train_portion) + len(extra_train)
+                    print(f"  {label}: {total_count} total -> {final_train} train, {len(val_portion)} val, {len(test_portion)} test")
+        
+        train_df = pd.concat(train_dfs, ignore_index=True) if train_dfs else pd.DataFrame()
+        val_df = pd.concat(val_dfs, ignore_index=True) if val_dfs else pd.DataFrame()
+        test_df = pd.concat(test_dfs, ignore_index=True) if test_dfs else pd.DataFrame()
+        
+        return train_df, val_df, test_df
+    
+    train_df, val_df, test_df = minimum_aware_split(
+        df, min_train_examples=args.min_examples, 
+        test_size=args.test_size, val_size=args.val_size, 
+        random_state=args.seed
     )
     
     print(f"\nData split: {len(train_df)} train, {len(val_df)} val, {len(test_df)} test")
