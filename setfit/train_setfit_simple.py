@@ -50,7 +50,7 @@ class SimpleHierarchicalClassifier:
     
     # Subsampling removed - not needed with 2,539 high-quality records
     
-    def train(self, train_df, val_df, model_name="sentence-transformers/paraphrase-mpnet-base-v2",
+    def train(self, train_df, val_df, model_name="sentence-transformers/paraphrase-multilingual-mpnet-base-v2",
               batch_size=8, num_epochs=3):
         """Train SetFit model with simple, working settings."""
         

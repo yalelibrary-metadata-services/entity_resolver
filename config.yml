@@ -4,7 +4,7 @@
 random_seed: 42
 
 # Directory Paths
-input_dir: "data/input"
+input_dir: "data/input/training"
 output_dir: "data/output"
 checkpoint_dir: "data/checkpoints"
 ground_truth_dir: "data/ground_truth"
@@ -22,7 +22,7 @@ skip_fields: ["attribution", "provision", "subjects", "genres", "relatedWork", "
 
 # Entity Matching Enhancement Configuration
 entity_matching:
-  enhancement_aggressiveness: "aggressive"  # Options: none, minimal, moderate, aggressive
+  enhancement_aggressiveness: "none"  # Options: none, minimal, moderate, aggressive
 
 # Enhanced Scaling Configuration
 use_enhanced_scaling: true
@@ -70,7 +70,7 @@ weaviate:
 # Cluster Validation Configuration
 cluster_validation:
   enabled: true                 # Enable cluster validation to improve precision
-  similarity_threshold: 0.50    # Decreased to allow more merging of clusters
+  similarity_threshold: 0.65    # Decreased to allow more merging of clusters
   coherence_threshold: 0.50     # Decreased to be more inclusive
   small_cluster_threshold: 2    # Validate all clusters except pairs
   min_cluster_size: 2           # Allow pairs to form clusters
@@ -81,12 +81,12 @@ cluster_validation:
   use_parallel: true            # Whether to use parallel processing for validation
   parallel_workers: 8           # Number of worker processes for parallel validation  
   debug_problematic_pairs: true   # Enable debugging for problematic pairs (entities with low similarity)
-  debug_similarity_threshold: 0.60 # Adjusted to match new similarity threshold
+  debug_similarity_threshold: 0.65 # Adjusted to match new similarity threshold
 
 # Clustering Configuration
 clustering:
-  use_strict_clustering: false   # Enable strict clustering to prevent overmerging
-  min_edge_confidence: 0.75     # Minimum confidence required to follow an edge during clustering
+  use_strict_clustering: true   # Enable strict clustering to prevent overmerging
+  min_edge_confidence: 0.65     # Minimum confidence required to follow an edge during clustering
   require_multiple_connections: false  # If true, entities need multiple high-confidence connections
   min_connections: 2            # Minimum number of connections required when require_multiple_connections is true
 
