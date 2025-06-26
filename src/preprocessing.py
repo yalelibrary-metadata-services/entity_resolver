@@ -352,11 +352,14 @@ class OptimizedPreprocessor:
     def _init_database(self):
         """Initialize SQLite database with optimized settings"""
         with self._get_connection() as conn:
-            # Enable optimizations
+            # Enable optimizations for bulk loading
             conn.execute("PRAGMA journal_mode = WAL")
-            conn.execute("PRAGMA synchronous = NORMAL")
-            conn.execute("PRAGMA cache_size = -64000")  # 64MB cache
+            conn.execute("PRAGMA synchronous = OFF")  # Much faster for bulk loads
+            conn.execute("PRAGMA cache_size = -128000")  # 128MB cache
             conn.execute("PRAGMA temp_store = MEMORY")
+            conn.execute("PRAGMA mmap_size = 30000000000")  # 30GB mmap
+            conn.execute("PRAGMA page_size = 32768")  # Larger pages
+            conn.execute("PRAGMA locking_mode = EXCLUSIVE")  # No concurrent access needed
             
             # Create tables
             conn.execute("""
@@ -411,17 +414,65 @@ class OptimizedPreprocessor:
         total_rows = 0
         errors = []
         
-        # Process files in this batch
-        with self._get_connection() as conn:
-            for file_path in file_paths:
-                try:
-                    rows_processed = self._process_single_file(conn, file_path)
-                    total_rows += rows_processed
-                except Exception as e:
-                    logger.error(f"Error processing file {file_path}: {str(e)}")
-                    errors.append((file_path, str(e)))
+        # Process files in parallel first to prepare data
+        file_data = []
+        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
+            future_to_file = {executor.submit(self._prepare_file_data, fp): fp for fp in file_paths}
             
-            conn.commit()
+            for future in as_completed(future_to_file):
+                file_path = future_to_file[future]
+                try:
+                    result = future.result()
+                    if result:
+                        file_data.append(result)
+                        total_rows += result['rows_processed']
+                except Exception as e:
+                    logger.error(f"Error preparing file {file_path}: {str(e)}")
+                    errors.append((file_path, str(e)))
+        
+        # Now write all data to SQLite in one transaction
+        if file_data:
+            with self._get_connection() as conn:
+                conn.execute("BEGIN TRANSACTION")
+                
+                # Combine all data
+                all_entities = []
+                all_strings = {}
+                all_mappings = {}
+                
+                for data in file_data:
+                    all_entities.extend(data['entities'])
+                    all_strings.update(data['strings'])
+                    all_mappings.update(data['mappings'])
+                
+                # Bulk insert
+                if all_entities:
+                    conn.executemany("""
+                        INSERT OR REPLACE INTO entity_hashes 
+                        (person_id, composite_hash, person_hash, roles_hash, title_hash, provision_hash, subjects_hash, marcKey_hash)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """, all_entities)
+                
+                if all_strings:
+                    string_list = [(h, v) for h, v in all_strings.items()]
+                    conn.executemany("""
+                        INSERT OR IGNORE INTO string_hashes (hash, original_value, count)
+                        VALUES (?, ?, 0)
+                    """, string_list)
+                    
+                    conn.executemany("""
+                        UPDATE string_hashes SET count = count + 1 WHERE hash = ?
+                    """, [(h,) for h in all_strings.keys()])
+                
+                if all_mappings:
+                    mapping_list = list(all_mappings.values())
+                    conn.executemany("""
+                        INSERT INTO field_hash_mapping (hash, field, count)
+                        VALUES (?, ?, 1)
+                        ON CONFLICT(hash, field) DO UPDATE SET count = count + 1
+                    """, mapping_list)
+                
+                conn.execute("COMMIT")
         
         elapsed_time = time.time() - start_time
         logger.info(f"Batch {batch_num}: Processed {len(file_paths)} files, {total_rows} rows in {elapsed_time:.2f}s")
@@ -433,6 +484,72 @@ class OptimizedPreprocessor:
             'elapsed_time': elapsed_time,
             'errors': errors
         }
+    
+    def _prepare_file_data(self, file_path: str) -> Optional[Dict[str, Any]]:
+        """Prepare data from a single file without database access"""
+        try:
+            # Load CSV
+            df = pd.read_csv(file_path, na_values='', keep_default_na=False)
+            
+            # Expected fields
+            required_fields = ['composite', 'marcKey', 'person', 'roles', 'title', 'provision', 'subjects', 'personId']
+            
+            # Fill missing fields
+            for field in required_fields:
+                if field not in df.columns:
+                    df[field] = ''
+            
+            # Filter out rows without personId
+            df = df[df['personId'].notna() & (df['personId'] != '')]
+            rows_processed = len(df)
+            
+            if rows_processed == 0:
+                return None
+            
+            # Vectorized processing
+            string_records = {}
+            field_mappings = {}
+            
+            # Process all fields at once
+            for field in required_fields:
+                if field == 'personId':
+                    continue
+                
+                # Vectorized string conversion and hashing
+                values = df[field].fillna('').astype(str)
+                
+                # Process unique values only
+                unique_values = values.unique()
+                for value in unique_values:
+                    if value:  # Skip empty strings
+                        hash_val = hash_string(value)
+                        if hash_val != "NULL":
+                            string_records[hash_val] = value
+                            field_key = f"{hash_val}_{field}"
+                            field_mappings[field_key] = (hash_val, field)
+            
+            # Build entity records using vectorized operations
+            field_hashes = {}
+            for field in required_fields:
+                if field == 'personId':
+                    continue
+                values = df[field].fillna('').astype(str)
+                field_hashes[field] = values.apply(hash_string)
+            
+            person_ids = df['personId'].astype(str).tolist()
+            hash_columns = [field_hashes[field].tolist() for field in required_fields if field != 'personId']
+            entity_records = [(pid,) + hash_tuple for pid, *hash_tuple in zip(person_ids, *hash_columns)]
+            
+            return {
+                'entities': entity_records,
+                'strings': string_records,
+                'mappings': field_mappings,
+                'rows_processed': rows_processed
+            }
+            
+        except Exception as e:
+            logger.error(f"Error preparing data from {file_path}: {str(e)}")
+            raise
     
     def _process_single_file(self, conn: sqlite3.Connection, file_path: str) -> int:
         """Process a single file and insert data into SQLite"""
@@ -447,85 +564,92 @@ class OptimizedPreprocessor:
             if field not in df.columns:
                 df[field] = ''
         
-        rows_processed = 0
-        entity_batch = []
-        string_batch = []
-        field_mapping_batch = []
+        # Filter out rows without personId
+        df = df[df['personId'].notna() & (df['personId'] != '')]
+        rows_processed = len(df)
         
-        for _, row in df.iterrows():
-            person_id = str(row['personId'])
-            if not person_id:
+        if rows_processed == 0:
+            return 0
+        
+        # Vectorized processing - much faster than iterrows
+        entity_records = []
+        string_records = {}  # Use dict to dedupe
+        field_mappings = {}  # Use dict to dedupe
+        
+        # Process all fields at once
+        for field in required_fields:
+            if field == 'personId':
                 continue
             
-            # Hash all fields
-            hashes = {}
-            for field in required_fields:
-                if field == 'personId':
-                    continue
-                
-                value = str(row[field]) if pd.notna(row[field]) else ''
-                hash_val = hash_string(value)
-                hashes[f"{field}_hash"] = hash_val
-                
-                # Track string for later retrieval
-                if hash_val != "NULL" and value:
-                    string_batch.append((hash_val, value))
-                    field_mapping_batch.append((hash_val, field))
+            # Vectorized string conversion and hashing
+            values = df[field].fillna('').astype(str)
             
-            # Add entity record
-            entity_batch.append((person_id,) + tuple(hashes.get(f"{field}_hash", "NULL") 
-                                                    for field in required_fields if field != 'personId'))
-            
-            rows_processed += 1
-            
-            # Batch insert when we have enough records
-            if len(entity_batch) >= 1000:
-                self._batch_insert_entities(conn, entity_batch)
-                self._batch_insert_strings(conn, string_batch)
-                self._batch_insert_field_mappings(conn, field_mapping_batch)
-                entity_batch = []
-                string_batch = []
-                field_mapping_batch = []
+            # Process unique values only
+            unique_values = values.unique()
+            for value in unique_values:
+                if value:  # Skip empty strings
+                    hash_val = hash_string(value)
+                    if hash_val != "NULL":
+                        string_records[hash_val] = value
+                        field_key = f"{hash_val}_{field}"
+                        field_mappings[field_key] = (hash_val, field)
         
-        # Insert remaining records
-        if entity_batch:
-            self._batch_insert_entities(conn, entity_batch)
-            self._batch_insert_strings(conn, string_batch)
-            self._batch_insert_field_mappings(conn, field_mapping_batch)
+        # Build entity records using vectorized operations
+        # Pre-compute all hashes for all fields
+        field_hashes = {}
+        for field in required_fields:
+            if field == 'personId':
+                continue
+            # Vectorized hashing
+            values = df[field].fillna('').astype(str)
+            field_hashes[field] = values.apply(hash_string)
+        
+        # Build entity records efficiently using zip
+        person_ids = df['personId'].astype(str).tolist()
+        
+        # Create tuples using list comprehension and zip - much faster than iterrows
+        hash_columns = [field_hashes[field].tolist() for field in required_fields if field != 'personId']
+        entity_records = [(pid,) + hash_tuple for pid, *hash_tuple in zip(person_ids, *hash_columns)]
+        
+        # Bulk insert all records at once
+        if entity_records:
+            # Use transactions for better performance
+            conn.execute("BEGIN TRANSACTION")
+            
+            # Insert entities
+            conn.executemany("""
+                INSERT OR REPLACE INTO entity_hashes 
+                (person_id, composite_hash, person_hash, roles_hash, title_hash, provision_hash, subjects_hash, marcKey_hash)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, entity_records)
+            
+            # Bulk insert strings
+            if string_records:
+                # Convert to list for executemany
+                string_list = [(h, v) for h, v in string_records.items()]
+                conn.executemany("""
+                    INSERT OR IGNORE INTO string_hashes (hash, original_value, count)
+                    VALUES (?, ?, 0)
+                """, string_list)
+                
+                # Update counts separately
+                conn.executemany("""
+                    UPDATE string_hashes SET count = count + 1 WHERE hash = ?
+                """, [(h,) for h in string_records.keys()])
+            
+            # Bulk insert field mappings
+            if field_mappings:
+                mapping_list = list(field_mappings.values())
+                conn.executemany("""
+                    INSERT INTO field_hash_mapping (hash, field, count)
+                    VALUES (?, ?, 1)
+                    ON CONFLICT(hash, field) DO UPDATE SET count = count + 1
+                """, mapping_list)
+            
+            conn.execute("COMMIT")
         
         return rows_processed
     
-    def _batch_insert_entities(self, conn: sqlite3.Connection, batch: List[Tuple]):
-        """Batch insert entity records"""
-        conn.executemany("""
-            INSERT OR REPLACE INTO entity_hashes 
-            (person_id, composite_hash, person_hash, roles_hash, title_hash, provision_hash, subjects_hash, marcKey_hash)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, batch)
-    
-    def _batch_insert_strings(self, conn: sqlite3.Connection, batch: List[Tuple[str, str]]):
-        """Batch insert/update string records"""
-        for hash_val, original_value in batch:
-            conn.execute("""
-                INSERT INTO string_hashes (hash, original_value, count)
-                VALUES (?, ?, 1)
-                ON CONFLICT(hash) DO UPDATE SET
-                    count = count + 1,
-                    original_value = CASE 
-                        WHEN original_value IS NULL OR original_value = '' 
-                        THEN excluded.original_value 
-                        ELSE original_value 
-                    END
-            """, (hash_val, original_value))
-    
-    def _batch_insert_field_mappings(self, conn: sqlite3.Connection, batch: List[Tuple[str, str]]):
-        """Batch insert/update field mapping records"""
-        conn.executemany("""
-            INSERT INTO field_hash_mapping (hash, field, count)
-            VALUES (?, ?, 1)
-            ON CONFLICT(hash, field) DO UPDATE SET
-                count = count + 1
-        """, batch)
     
     def process_all_files(self, input_files: List[str]) -> Dict[str, Any]:
         """Process all CSV files"""
