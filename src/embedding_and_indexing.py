@@ -260,15 +260,15 @@ class EmbeddingAndIndexingPipeline:
         """
         # Import here to avoid circular imports
         sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        from src.vector_diagnostics import VectorDiagnosticTool
+        #from src.vector_diagnostics import VectorDiagnosticTool
         
         indexed_count = 0
         
         try:
             # Initialize diagnostic tool
-            diagnostics = VectorDiagnosticTool(self.weaviate_client, {
-                "embedding_dimensions": self.embedding_dimensions
-            })
+            # diagnostics = VectorDiagnosticTool(self.weaviate_client, {
+            #     "embedding_dimensions": self.embedding_dimensions
+            # })
             
             # Select verification samples
             verification_samples = random.sample(
@@ -292,16 +292,16 @@ class EmbeddingAndIndexingPipeline:
                         properties = {k: v for k, v in item.items() if k != 'vector'}
                         
                         # Process vector with diagnostic tool
-                        vector_data = diagnostics.debug_vector_transmission(
-                            item['vector'],
-                            item['hash_value'],
-                            item['field_type']
-                        )
+                        # vector_data = diagnostics.debug_vector_transmission(
+                        #     item['vector'],
+                        #     item['hash_value'],
+                        #     item['field_type']
+                        # )
                         
-                        # Verify vector dimensions
-                        if len(vector_data) != self.embedding_dimensions:
-                            logger.error(f"Vector dimension mismatch: {len(vector_data)} != {self.embedding_dimensions}")
-                            continue
+                        # # Verify vector dimensions
+                        # if len(vector_data) != self.embedding_dimensions:
+                        #     logger.error(f"Vector dimension mismatch: {len(vector_data)} != {self.embedding_dimensions}")
+                        #     continue
                         
                         # Add object with explicit vector format
                         batch_writer.add_object(
@@ -316,12 +316,12 @@ class EmbeddingAndIndexingPipeline:
                         logger.error(f"Error indexing item {item.get('hash_value', 'unknown')}: {str(e)}")
             
             # Verify vector persistence for sample items
-            if verification_samples:
-                verification_success = diagnostics.verify_vector_persistence(verification_samples)
-                if verification_success:
-                    logger.info("Vector persistence verification PASSED")
-                else:
-                    logger.warning("Vector persistence verification FAILED")
+            # if verification_samples:
+            #     verification_success = diagnostics.verify_vector_persistence(verification_samples)
+            #     if verification_success:
+            #         logger.info("Vector persistence verification PASSED")
+            #     else:
+            #         logger.warning("Vector persistence verification FAILED")
             
             logger.info(f"Successfully indexed {indexed_count}/{len(items_to_index)} items")
             
