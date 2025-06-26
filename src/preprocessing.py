@@ -21,24 +21,28 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from contextlib import contextmanager
 from tqdm import tqdm
 import pandas as pd
+import numpy as np
+from collections import defaultdict
+import zlib
 
 logger = logging.getLogger(__name__)
 
 def hash_string(string_value: str) -> str:
     """
-    Create a deterministic hash for a string value.
+    Create a deterministic hash for a string value using CRC32 (faster than MD5).
     
     Args:
         string_value: String value to hash
         
     Returns:
-        MD5 hash of the string
+        CRC32 hash of the string as hex
     """
     if not string_value:
         return "NULL"
-        
-    # Create deterministic hash
-    return hashlib.md5(string_value.encode('utf-8')).hexdigest()
+    
+    # Use CRC32 for faster hashing (2-3x faster than MD5)
+    # Convert to hex and pad to ensure consistent length
+    return format(zlib.crc32(string_value.encode('utf-8')) & 0xffffffff, '08x')
 
 def process_file(file_path: str) -> Dict[str, Any]:
     """
@@ -775,7 +779,7 @@ class OptimizedPreprocessor:
 
 def process_data_optimized(config: Dict[str, Any], input_dir: str, checkpoint_dir: str) -> Tuple[Dict[str, Dict[str, str]], Dict[str, str], Dict[str, Any]]:
     """
-    Optimized preprocessing using SQLite for scalable processing
+    Optimized preprocessing using memory-efficient batch processing
     
     Args:
         config: Configuration dictionary
@@ -786,6 +790,7 @@ def process_data_optimized(config: Dict[str, Any], input_dir: str, checkpoint_di
         Tuple of (hash_lookup, string_dict, metrics)
     """
     logger.info(f"Starting optimized preprocessing from {input_dir}")
+    start_time = time.time()
     
     # Get list of input files
     input_files = []
@@ -797,29 +802,294 @@ def process_data_optimized(config: Dict[str, Any], input_dir: str, checkpoint_di
         logger.warning(f"No CSV files found in {input_dir}")
         return {}, {}, {'status': 'no_files_found'}
     
+    logger.info(f"Found {len(input_files)} input files to process")
+    
     # Get configuration parameters
-    batch_size = config.get("preprocessing_batch_size", 10)
+    batch_size = config.get("preprocessing_batch_size", 50)
     max_workers = config.get("preprocessing_workers", 4)
     
-    # Create preprocessor
-    preprocessor = OptimizedPreprocessor(checkpoint_dir, batch_size, max_workers)
+    # Initialize global data structures
+    output_data = {}
+    string_dict = {}
+    string_counts = defaultdict(int)  # Use defaultdict for cleaner code
+    field_hash_mapping = defaultdict(lambda: defaultdict(int))
     
+    # Process files in batches
+    total_rows = 0
+    total_batches = (len(input_files) - 1) // batch_size + 1
+    
+    for batch_idx in range(0, len(input_files), batch_size):
+        batch_start = time.time()
+        batch_files = input_files[batch_idx:batch_idx + batch_size]
+        batch_num = batch_idx // batch_size + 1
+        
+        logger.info(f"Processing batch {batch_num}/{total_batches} with {len(batch_files)} files")
+        
+        # Process files in parallel
+        batch_results = []
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            # Use the optimized file processing function
+            future_to_file = {
+                executor.submit(_process_file_optimized, file_path): file_path 
+                for file_path in batch_files
+            }
+            
+            for future in as_completed(future_to_file):
+                file_path = future_to_file[future]
+                try:
+                    result = future.result()
+                    if result:
+                        batch_results.append(result)
+                        total_rows += result['rows_processed']
+                except Exception as e:
+                    logger.error(f"Error processing file {file_path}: {str(e)}")
+        
+        # Merge batch results more efficiently
+        for result in batch_results:
+            # Bulk update entities
+            output_data.update(result['entities_dict'])
+            
+            # Merge strings
+            string_dict.update(result['strings'])
+            for hash_val in result['strings']:
+                string_counts[hash_val] += 1
+            
+            # Merge field mappings
+            for hash_val, field in result['mappings'].values():
+                field_hash_mapping[hash_val][field] += 1
+        
+        batch_elapsed = time.time() - batch_start
+        batch_rows = sum(r['rows_processed'] for r in batch_results)
+        logger.info(f"Batch {batch_num}: Processed {len(batch_files)} files, "
+                   f"{batch_rows} rows in {batch_elapsed:.2f}s "
+                   f"({batch_rows/batch_elapsed:.0f} rows/sec)")
+        
+        # Save checkpoint after every 10 batches
+        if batch_num % 10 == 0:
+            save_checkpoint(output_data, dict(string_counts), dict(field_hash_mapping), checkpoint_dir, batch_num)
+    
+    # Save final results
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    
+    logger.info("Saving final results...")
+    save_start = time.time()
+    
+    with open(os.path.join(checkpoint_dir, 'hash_lookup.pkl'), 'wb') as f:
+        pickle.dump(output_data, f, protocol=pickle.HIGHEST_PROTOCOL)
+    
+    with open(os.path.join(checkpoint_dir, 'string_dict.pkl'), 'wb') as f:
+        pickle.dump(string_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
+    
+    with open(os.path.join(checkpoint_dir, 'string_counts.pkl'), 'wb') as f:
+        pickle.dump(dict(string_counts), f, protocol=pickle.HIGHEST_PROTOCOL)
+    
+    with open(os.path.join(checkpoint_dir, 'field_hash_mapping.pkl'), 'wb') as f:
+        pickle.dump(dict(field_hash_mapping), f, protocol=pickle.HIGHEST_PROTOCOL)
+    
+    save_elapsed = time.time() - save_start
+    logger.info(f"Saved results in {save_elapsed:.2f} seconds")
+    
+    elapsed_time = time.time() - start_time
+    
+    logger.info(f"Preprocessing completed in {elapsed_time:.2f} seconds")
+    logger.info(f"Processed {total_rows} total rows ({total_rows/elapsed_time:.0f} rows/sec)")
+    logger.info(f"Found {len(output_data)} unique entities")
+    logger.info(f"Found {len(string_dict)} unique strings")
+    
+    metrics = {
+        'status': 'completed',
+        'elapsed_time': elapsed_time,
+        'total_files': len(input_files),
+        'total_rows': total_rows,
+        'entity_count': len(output_data),
+        'unique_strings': len(string_dict),
+        'rows_per_second': total_rows / elapsed_time
+    }
+    
+    return output_data, string_dict, metrics
+
+
+def _process_file_optimized(file_path: str) -> Optional[Dict[str, Any]]:
+    """
+    Optimized file processing with better memory efficiency and speed
+    """
     try:
-        # Process all files
-        metrics = preprocessor.process_all_files(input_files)
+        # Read CSV with optimized settings
+        df = pd.read_csv(
+            file_path,
+            na_values='',
+            keep_default_na=False,
+            engine='c',  # Faster C engine
+            dtype=str,   # Skip type inference
+        )
         
-        # Export to pickle format
-        output_data, string_dict, string_counts = preprocessor.export_to_pickle()
+        # Expected fields
+        required_fields = ['composite', 'marcKey', 'person', 'roles', 'title', 'provision', 'subjects', 'personId']
         
-        # Add final statistics to metrics
-        metrics['entity_count'] = len(output_data)
-        metrics['unique_strings'] = len(string_dict)
+        # Add missing columns efficiently
+        missing_cols = set(required_fields) - set(df.columns)
+        if missing_cols:
+            for col in missing_cols:
+                df[col] = ''
         
-        return output_data, string_dict, metrics
+        # Filter valid personIds using vectorized operations
+        valid_mask = (df['personId'].notna()) & (df['personId'] != '')
+        if not valid_mask.any():
+            return None
         
-    finally:
-        # Clean up temporary database
-        preprocessor.cleanup()
+        df_valid = df.loc[valid_mask, required_fields]
+        rows_processed = len(df_valid)
+        
+        # Convert to numpy for faster processing
+        data_array = df_valid.values
+        person_ids = data_array[:, required_fields.index('personId')]
+        
+        # Collect unique values across all fields in one pass
+        unique_collector = defaultdict(set)
+        field_cols = {}
+        
+        for col_idx, field in enumerate(required_fields):
+            if field != 'personId':
+                col_data = data_array[:, col_idx]
+                field_cols[field] = col_data
+                
+                # Get unique values
+                unique_vals = np.unique(col_data)
+                for val in unique_vals:
+                    if val:  # Skip empty strings
+                        unique_collector[val].add(field)
+        
+        # Hash all unique values once
+        value_to_hash = {'': 'NULL'}
+        string_records = {}
+        field_mappings = {}
+        
+        for value, fields in unique_collector.items():
+            hash_val = hash_string(value)
+            value_to_hash[value] = hash_val
+            string_records[hash_val] = value
+            
+            # Build field mappings
+            for field in fields:
+                field_key = f"{hash_val}_{field}"
+                field_mappings[field_key] = (hash_val, field)
+        
+        # Build entity records efficiently
+        entities_dict = {}
+        
+        for i in range(rows_processed):
+            person_id = person_ids[i]
+            
+            # Build entity dict directly
+            entity = {}
+            for field in required_fields:
+                if field != 'personId':
+                    value = field_cols[field][i]
+                    entity[field] = value_to_hash.get(value, 'NULL')
+            
+            entities_dict[person_id] = entity
+        
+        return {
+            'entities_dict': entities_dict,
+            'strings': string_records,
+            'mappings': field_mappings,
+            'rows_processed': rows_processed
+        }
+        
+    except Exception as e:
+        logger.error(f"Error processing file {file_path}: {str(e)}")
+        raise
+
+
+def _process_file_simple(file_path: str) -> Optional[Dict[str, Any]]:
+    """Ultra-optimized file processing with minimal overhead"""
+    try:
+        # Use pandas with optimized settings for faster CSV reading
+        df = pd.read_csv(
+            file_path, 
+            na_values='', 
+            keep_default_na=False,
+            engine='c',  # C engine is faster
+            dtype=str,   # Read everything as string to avoid type inference
+            memory_map=True  # Memory map large files
+        )
+        
+        # Expected fields
+        required_fields = ['composite', 'marcKey', 'person', 'roles', 'title', 'provision', 'subjects', 'personId']
+        field_indices = {field: i for i, field in enumerate(required_fields) if field != 'personId'}
+        
+        # Add missing columns with empty strings
+        for field in required_fields:
+            if field not in df.columns:
+                df[field] = ''
+        
+        # Filter valid personIds using numpy for speed
+        person_mask = (df['personId'].notna()) & (df['personId'] != '')
+        if not person_mask.any():
+            return None
+        
+        # Work with numpy arrays for maximum performance
+        data_array = df.loc[person_mask, required_fields].values
+        rows_processed = len(data_array)
+        
+        # Extract person IDs
+        person_ids = data_array[:, required_fields.index('personId')]
+        
+        # Single-pass processing: collect unique values and build hash mapping
+        unique_collector = defaultdict(set)
+        
+        # Process each field column
+        for field, col_idx in field_indices.items():
+            col_data = data_array[:, col_idx]
+            # Get unique values for this column
+            unique_vals = np.unique(col_data)
+            for val in unique_vals:
+                if val:  # Skip empty strings
+                    unique_collector[val].add(field)
+        
+        # Hash all unique values in one pass
+        value_to_hash = {'': 'NULL'}
+        string_records = {}
+        field_mappings = {}
+        
+        for value, fields in unique_collector.items():
+            hash_val = hash_string(value)
+            value_to_hash[value] = hash_val
+            string_records[hash_val] = value
+            
+            # Build field mappings for this value
+            for field in fields:
+                field_key = f"{hash_val}_{field}"
+                field_mappings[field_key] = (hash_val, field)
+        
+        # Vectorized entity record creation
+        # Pre-allocate the entity records array
+        entity_records = []
+        
+        # Build records using numpy operations
+        for i in range(rows_processed):
+            record = [person_ids[i]]
+            row = data_array[i]
+            
+            # Append hashes in field order
+            for field in required_fields:
+                if field != 'personId':
+                    col_idx = required_fields.index(field)
+                    value = row[col_idx]
+                    record.append(value_to_hash.get(value, 'NULL'))
+            
+            entity_records.append(tuple(record))
+        
+        return {
+            'entities': entity_records,
+            'strings': string_records,
+            'mappings': field_mappings,
+            'rows_processed': rows_processed
+        }
+        
+    except Exception as e:
+        logger.error(f"Error processing file {file_path}: {str(e)}")
+        raise
 
 
 def save_checkpoint(output_data: Dict[str, Dict[str, str]], string_counts: Dict[str, int],
