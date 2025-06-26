@@ -538,7 +538,7 @@ class OptimizedPreprocessor:
             
             person_ids = df['personId'].astype(str).tolist()
             hash_columns = [field_hashes[field].tolist() for field in required_fields if field != 'personId']
-            entity_records = [(pid,) + hash_tuple for pid, *hash_tuple in zip(person_ids, *hash_columns)]
+            entity_records = [(pid,) + tuple(hashes) for pid, hashes in zip(person_ids, zip(*hash_columns))]
             
             return {
                 'entities': entity_records,
@@ -609,7 +609,7 @@ class OptimizedPreprocessor:
         
         # Create tuples using list comprehension and zip - much faster than iterrows
         hash_columns = [field_hashes[field].tolist() for field in required_fields if field != 'personId']
-        entity_records = [(pid,) + hash_tuple for pid, *hash_tuple in zip(person_ids, *hash_columns)]
+        entity_records = [(pid,) + tuple(hashes) for pid, hashes in zip(person_ids, zip(*hash_columns))]
         
         # Bulk insert all records at once
         if entity_records:
