@@ -281,8 +281,17 @@ class PipelineOrchestrator:
             checkpoint_dir = self.config.get('checkpoint_dir', 'data/checkpoints')
             files_to_delete = [
                 os.path.join(checkpoint_dir, 'hash_lookup.pkl'),
-                os.path.join(checkpoint_dir, 'string_dict.pkl')
+                os.path.join(checkpoint_dir, 'string_dict.pkl'),
+                os.path.join(checkpoint_dir, 'string_counts.pkl'),
+                os.path.join(checkpoint_dir, 'field_hash_mapping.pkl'),
+                os.path.join(checkpoint_dir, 'preprocessing_temp.db')  # SQLite database
             ]
+            
+            # Also delete any preprocessing checkpoint files
+            import glob
+            checkpoint_pattern = os.path.join(checkpoint_dir, 'preprocessing_checkpoint_*.pkl')
+            checkpoint_files = glob.glob(checkpoint_pattern)
+            files_to_delete.extend(checkpoint_files)
             
             for file_path in files_to_delete:
                 if os.path.exists(file_path):

@@ -1,4 +1,4 @@
-let $db := "training_dataset_classified_2025-06-21"
+let $db := "training_dataset_classified_2025-06-25"
 let $fp := ``[10667180#Agent600-20	10773637#Agent600-19
 10651144#Agent600-19	10658209#Agent600-19
 10651990#Agent600-20	10651052#Agent600-19
@@ -8,6 +8,7 @@ let $fp := ``[10667180#Agent600-20	10773637#Agent600-19
 10721964#Agent600-19	1499900#Agent100-12
 10651990#Agent600-20	10759080#Agent600-19
 10721964#Agent600-19	5610980#Agent700-23
+10721964#Agent600-19	11449183#Agent700-25
 10721964#Agent600-19	11449955#Agent100-11
 10665198#Agent600-20	10703812#Agent600-19
 11670851#Agent700-19	11266484#Agent700-15
@@ -28,8 +29,9 @@ let $fp := ``[10667180#Agent600-20	10773637#Agent600-19
 let $tokens := tokenize($fp, "\n")
 for $token in $tokens
 let $tab := tokenize($token, "\t")
-return <record>{
+for $t in $tab
+return <record id="{db:text($db, $t)/../../*[@name = "personId"]}">{
   
-  db:text($db, $tab)/../../*[@name = "composite"]
+  db:text($db, $t)/../../*
   
 }</record>

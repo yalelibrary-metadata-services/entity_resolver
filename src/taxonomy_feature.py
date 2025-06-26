@@ -32,7 +32,7 @@ class TaxonomyDissimilarity:
         
         # Load paths from config
         taxonomy_path = config.get('taxonomy_path', 'data/input/revised_taxonomy_final.json')
-        classified_path = config.get('classified_data_path', 'data/input/training_dataset_classified_2025-06-21.csv')
+        classified_path = config.get('classified_data_path', 'data/input/training/training_dataset_classified_2025-06-25.csv')
         
         # Load taxonomy first and build parent-child map
         self.taxonomy = self._load_taxonomy(taxonomy_path)

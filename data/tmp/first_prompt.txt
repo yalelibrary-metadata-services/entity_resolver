@@ -1,0 +1,133 @@
+Analyze this catalog entry for classification:
+
+Person: Laud, William, 1573-1645
+PersonID: 760402-9398dfe6-6e76-476f-9220-72e0ade0b40a#http://id.loc.gov/rwo/agents/n50039777
+Identity: 558.0
+Composite: Title: Liturgy, episcopacy, and church ritual: three speeches
+Subjects: Church of England
+Provision information: Oxford: John Henry Parker, 1840
+
+Based on this catalog entry, determine the appropriate classification.
+
+Taxonomy Categories:
+
+# Arts, Culture, and Creative Expression
+Individuals whose work shapes, interprets, or critiques the visual, auditory, literary, and performative arts. Encompasses creators, curators, critics, and documentarians across traditional, contemporary, and digital forms, highlighting the interplay between art, identity, society, and technology. Includes those working at the intersection of arts and other disciplines.
+Associated terms: Creative Arts, Fine Arts, Cultural Expression, Aesthetic Production, Cultural Innovation, Creative Industries, Artistic Practice, Cultural Creation, Creative Disciplines
+
+## Literature and Narrative Arts
+Authors, poets, playwrights, literary critics, editors, and scholars who create, interpret, analyze, or disseminate written and oral works—including fiction, poetry, drama, essays, literary criticism, and literary theory—across cultures, traditions, and media formats. Includes those who document or translate literature or develop new forms of narrative expression.
+Associated terms: Literary Arts, Literary Creation, Writing, Creative Writing, Poetics, Storytelling, Prose and Poetry, Literary Criticism, Fiction Writing, Literary Scholarship, Playwriting, Dramaturgy, Screenwriting, Literary Theory, Rhetoric
+
+## Visual Arts and Design
+Artists, designers, photographers, architects, curators, conservators, and critics who create, document, interpret, preserve, or analyze visual forms—including painting, sculpture, photography, architecture, graphic design, and digital media. Includes those applying visual arts techniques to other disciplines such as scientific, archaeological, or medical illustration and photography, as well as those developing new visual technologies and methodologies.
+Associated terms: Plastic Arts, Fine Arts, Graphic Arts, Painting and Sculpture, Illustration, Art Criticism, Photography, Art History, Digital Art, Graphic Design, Visual Documentation, Art Curation, Architecture, Technical Illustration, Scientific Illustration, Decorative Arts, Ceramics, Printmaking, Textile Arts, Fashion Design
+
+## Music, Sound, and Sonic Arts
+Composers, performers, conductors, musicologists, sound artists, acousticians, and music scholars who create, interpret, document, analyze, or study music and sound-based works, spanning genres, traditions, technologies, and applications. Includes those who develop music technologies, preserve sonic heritage, or apply musical concepts to other fields such as therapy, education, or scientific research.
+Associated terms: Musical Arts, Musical Composition, Musical Performance, Composition, Performance, Musicology, Songs, Conducting, Sound Design, Sound Engineering, Ethnomusicology, Music Theory, Acoustic Design, Orchestration, Vocal Music, Instrumental Music, Music History, Music Education, Music Criticism, Music Therapy
+
+## Performing Arts and Media
+Actors, directors, dancers, choreographers, filmmakers, broadcasters, performance artists, and media scholars who create, perform, direct, produce, document, or analyze works presented through live, recorded, or digital performance—including theater, dance, film, television, radio, and interactive media. Includes those developing new performance technologies and methodologies, as well as those preserving and studying performance traditions across cultures.
+Associated terms: Theater, Dance, Film and Cinema, Theater and Drama, Dance and Movement, Film and Digital Performance, Acting, Directing, Choreography, Cinematography, Broadcasting, Performance Art, Television, Radio, Digital Media, Theatrical Production, Stage Direction, Stage Design, Costume Design, Film Production, Animation
+
+## Documentary and Technical Arts
+Photographers, illustrators, filmmakers, and technical artists who apply visual and media arts techniques primarily to document, record, or visualize subjects for scientific, historical, archaeological, medical, or other scholarly purposes. Includes those who develop specialized visual documentation methodologies and technologies that bridge artistic practice with other disciplines, as well as those who use documentary techniques to preserve cultural heritage or scientific knowledge.
+Associated terms: Documentary Photography, Scientific Illustration, Technical Illustration, Archaeological Documentation, Medical Illustration, Documentation, Technical Photography, Visual Documentation, Research Photography, Scientific Photography, Architectural Documentation, Visual Anthropology, Botanical Illustration, Zoological Illustration, Documentary Filmmaking, Technical Documentation, Field Recording, Heritage Documentation
+
+# Sciences, Research, and Discovery
+Researchers, theorists, experimentalists, and practitioners who advance knowledge of the natural and physical world through observation, experimentation, measurement, modeling, and theoretical analysis. Encompasses pure and applied sciences, medicine, technology, mathematics, and interdisciplinary scientific approaches aimed at understanding natural phenomena or developing practical applications.
+Associated terms: Scientific Inquiry, Scientific Investigation, Natural Sciences, Natural and Physical Sciences, Empirical Research, Scientific Methodology, Scientific Discovery, STEM Fields, Experimental Sciences
+
+## Natural Sciences
+Scientists who study the physical, chemical, biological, and earth systems of the natural world, including physics, chemistry, biology, geology, astronomy, ecology, and their subdisciplines. Encompasses those developing theoretical frameworks, conducting experiments, performing field observations, creating models, or developing instrumental techniques to advance understanding of natural phenomena across scales from subatomic particles to cosmic structures.
+Associated terms: Physical Sciences, Biological Sciences, Earth Sciences, Physics, Chemistry, Biology, Astronomy, Geology, Zoology, Botany, Ecology, Experimental Science, Paleontology, Molecular Biology, Oceanography, Meteorology, Evolutionary Biology, Microbiology, Natural History, Theoretical Physics
+
+## Mathematics and Quantitative Sciences
+Mathematicians, statisticians, quantitative analysts, and computational scientists who develop and apply mathematical models, theories, algorithms, and methods to understand patterns, structures, relationships, and data. Includes those working in pure theory, applied mathematical fields, statistical analysis, and the development of mathematical tools for other disciplines such as physics, economics, computer science, or social sciences.
+Associated terms: Mathematical Sciences, Pure Mathematics, Applied Mathematics, Statistics, Computational Science, Mathematical Modeling, Quantitative Analysis, Statistical Analysis, Mathematical Theory, Computational Mathematics, Geometry, Algebra, Analysis, Number Theory, Probability Theory, Operations Research, Mathematical Physics, Mathematical Logic, Numerical Analysis
+
+## Medicine, Health, and Clinical Sciences
+Physicians, clinicians, medical researchers, public health professionals, and healthcare practitioners who study, prevent, diagnose, treat, or research conditions affecting human or animal health. Includes those advancing biomedical knowledge, developing medical technologies and therapeutics, establishing clinical practices, designing healthcare systems, implementing public health measures, or preserving traditional healing knowledge across cultural contexts.
+Associated terms: Medical Sciences, Healthcare, Clinical Medicine, Public Health, Medical Research, Pathology, Nursing, Surgery, Pharmacy, Psychology, Psychiatry, Epidemiology, Veterinary Medicine, Biomedical Research, Medical Practice, Medical Education, Alternative Medicine, Traditional Medicine, Medical Anthropology, Medical Ethics, Medical Technology
+
+## Applied Sciences, Technology, and Engineering
+Engineers, technologists, inventors, computer scientists, and technical innovators who apply scientific principles, mathematical methods, and technical knowledge to develop technologies, solve practical problems, design systems, and create new tools, processes, and infrastructure. Includes those developing computational approaches, materials, devices, structures, or systems that address specific human needs or advance technological capabilities.
+Associated terms: Engineering, Technology, Invention, Technological Innovation, Civil Engineering, Mechanical Engineering, Electrical Engineering, Chemical Engineering, Computer Science, Information Technology, Materials Science, Systems Engineering, Technical Innovation, Aeronautical Engineering, Biomedical Engineering, Industrial Engineering, Software Development, Artificial Intelligence, Robotics, Technical Design
+
+## Agriculture, Environment, and Sustainability
+Agriculturalists, environmental scientists, ecologists, conservationists, and sustainability practitioners who study, develop, implement, or advocate for methods and systems for cultivating plants, raising animals, managing natural resources, protecting ecosystems, and developing sustainable practices. Includes those working at the intersection of biological sciences, land management, food systems, environmental protection, and climate adaptation.
+Associated terms: Farming, Horticulture, Ecology, Farming and Food Systems, Horticulture and Forestry, Environmental Science, Agronomy, Forestry, Fisheries, Sustainable Development, Conservation, Environmental Management, Animal Husbandry, Agricultural Science, Soil Science, Plant Science, Wildlife Management, Agroecology, Environmental Protection, Climate Science
+
+# Humanities, Thought, and Interpretation
+Scholars, thinkers, critics, and researchers who examine, interpret, analyze, and preserve human experience, culture, history, language, thought, and cultural artifacts through critical, theoretical, philosophical, textual, or archaeological approaches. Includes those who study, interpret, or preserve cultural heritage, historical records, languages, philosophical traditions, and material culture across time and geographic contexts.
+Associated terms: Human Studies, Liberal Arts, Philosophy and Thought, Intellectual History, Critical Studies, Philosophy and Culture, Hermeneutics, Textual Analysis, Cultural Interpretation, Historical Research
+
+## Philosophy and Ethics
+Philosophers, ethicists, logicians, and philosophical scholars who examine fundamental questions about existence, knowledge, values, reason, mind, language, and ethical systems through conceptual analysis, logical argumentation, and theoretical frameworks. Includes those developing philosophical systems, critiquing existing thought, applying philosophical methods to specific domains (science, art, politics), or engaging with philosophical traditions across cultures and historical periods.
+Associated terms: Philosophical Thought, Metaphysics, Moral Philosophy, Logic, Epistemology, Philosophical Systems, Philosophical Traditions, Applied Ethics, Philosophy of Science, Philosophy of Mind, Political Philosophy, Aesthetics, Philosophy of Religion, Philosophy of Language, Critical Theory, Phenomenology, Existentialism, Analytic Philosophy, Continental Philosophy, Philosophy of History
+
+## Religion, Theology, and Spirituality
+Theologians, religious leaders, clergy, scholars of religion, and spiritual practitioners who study, interpret, practice, teach, or lead within religious and spiritual traditions, theological systems, faith communities, or sacred textual traditions. Includes those analyzing religious phenomena academically, leading religious institutions or communities, developing theological frameworks, preserving religious traditions, or establishing new spiritual approaches.
+Associated terms: Religious Studies, Spiritual Traditions, Sacred Texts, Theological Thought, Comparative Religion, Religious History, Religious Leadership, Religious Practice, Mysticism, Biblical Studies, Religious Philosophy, Divinity, Exegesis, Church History, Religious Institutions, Pastoral Care, Liturgical Studies, Canon Law, Religious Orders, Monasticism
+
+## History, Heritage, and Memory
+Historians, archaeologists, archivists, preservationists, and memory scholars who study, document, excavate, preserve, analyze, or interpret past events, societies, cultures, and material remains through critical examination of sources, contexts, and artifacts. Includes those developing historical methodologies, managing historical records, conducting archaeological investigations, preserving cultural heritage, establishing museum collections, or studying collective memory processes.
+Associated terms: Historiography, Historical Research, Archaeology, Archives, Cultural Heritage, Public History, Preservation, Memory Studies, Historical Analysis, Archival Science, Archaeological Investigation, Historical Interpretation, Ancient History, Medieval History, Modern History, Art History, Intellectual History, Social History, Economic History, Political History, Oral History, Museum Studies
+
+## Language, Linguistics, and Communication
+Linguists, philologists, translators, language scholars, and communication theorists who study, analyze, document, preserve, translate, teach, or develop computational approaches to language structure, function, use, development, and variation. Includes those studying language in social, cognitive, historical, or computational contexts, documenting endangered languages, developing language technologies, or analyzing communication systems across cultures and modalities.
+Associated terms: Philology, Language Studies, Linguistic Analysis, Applied Linguistics, Theoretical Linguistics, Sociolinguistics, Psycholinguistics, Translation Studies, Computational Linguistics, Historical Linguistics, Language Documentation, Communication Theory, Grammar, Lexicography, Semantics, Phonology, Syntax, Discourse Analysis, Sign Language Studies, Applied Communication
+
+## Cultural Studies, Area Studies, and Social Sciences
+Sociologists, anthropologists, ethnographers, area specialists, cultural studies scholars, and social scientists who study, document, analyze, interpret, or compare human societies, cultural practices, social groups, social structures, material cultures, belief systems, and geographic regions through interdisciplinary approaches. Includes those conducting sociological research on social structures and institutions, ethnographic fieldwork on cultural practices, analyzing social and cultural phenomena, documenting traditional practices and folklore, studying demographic patterns and social change, preserving intangible cultural heritage, or developing theoretical frameworks for understanding social and cultural dynamics.
+Associated terms: Anthropology, Ethnography, Regional Studies, Cultural Anthropology, Ethnology, Area Studies, Cultural Analysis, Cross-Cultural Studies, Social Anthropology, Folklore Studies, Cultural Documentation, Material Culture, Ethnic Studies, Indigenous Studies, Gender Studies, Queer Theory, Postcolonial Studies, African Studies, Asian Studies, Latin American Studies, Middle Eastern Studies, European Studies, Sociology, Social Sciences, Social Theory, Social Research, Social Systems, Social Structures, Social Psychology, Sociolinguistics, Demographic Studies, Urban Studies, Rural Sociology, Community Studies, Social Demography, Population Studies
+
+# Society, Governance, and Public Life
+Leaders, analysts, scholars, practitioners, and advocates who engage with, study, reform, administer, or shape social institutions, political systems, economic structures, educational systems, legal frameworks, media environments, and collective action. Encompasses governance, law, economics, education, social policy, military affairs, media, and activism aimed at sustaining or transforming social systems and public institutions.
+Associated terms: Social Institutions, Public Affairs, Civic Leadership, Social Organization, Public Administration, Civil Society, Political Systems, Social Policy, Public Leadership
+
+## Politics, Policy, and Government
+Politicians, diplomats, public administrators, political scientists, policy analysts, and government officials who govern, lead, analyze, develop policy for, administer, or participate in political systems, government institutions, public policy processes, and international relations. Includes those developing political theory, implementing governance structures, representing constituencies, analyzing political phenomena, managing public resources, or negotiating international agreements.
+Associated terms: Political Leadership, Statecraft, Public Administration, Political Science, Governance, Public Policy, Diplomacy, Political Theory, International Relations, Political Institutions, Policy Analysis, Electoral Politics, Political Economy, Comparative Politics, Political Movements, Constitutional Systems, Geopolitics, Public Affairs
+
+## Law, Justice, and Jurisprudence
+Judges, lawyers, legal scholars, legislators, legal reformers, and advocates who create, interpret, apply, analyze, reform, or study legal systems, principles, codes, cases, and justice institutions. Includes those developing legal theory, adjudicating disputes, representing clients, drafting legislation, documenting legal history, or advocating for justice reforms across different legal traditions and jurisdictions.
+Associated terms: Legal Studies, Legal Practice, Judiciary, Legal Theory, Legal Systems, Comparative Law, International Law, Legal Scholarship, Legal History, Justice Systems, Human Rights, Constitutional Law, Criminal Law, Civil Law, Property Law, Contract Law, Administrative Law, Legal Education, Legal Philosophy, Law Enforcement
+
+## Economics, Business, and Finance
+Economists, business leaders, entrepreneurs, financial analysts, economic policymakers, and scholars who study, analyze, lead, develop theory for, or participate in economic systems, business enterprises, commercial activities, and financial institutions. Includes those advancing economic theory, managing business organizations, creating economic policy, developing financial systems, founding ventures, or analyzing economic trends across local, national, and global contexts.
+Associated terms: Economic Theory, Commerce, Entrepreneurship, Economic Systems, Business Administration, Financial Management, Economic Policy, Development Economics, Labor Economics, Business Leadership, Market Analysis, Financial Systems, Macroeconomics, Microeconomics, International Trade, Banking, Monetary Policy, Economic History, Accounting, Marketing
+
+## Education, Pedagogy, and Learning
+Educators, teachers, professors, educational researchers, learning theorists, educational administrators, and curriculum developers who teach, lead, study, reform, develop theory for, or contribute to educational institutions, pedagogical methods, learning processes, and educational systems. Includes those developing educational approaches, managing educational institutions, researching learning sciences, creating educational policy, or preserving and transmitting knowledge across formal and informal contexts.
+Associated terms: Teaching, Learning, Educational Theory, Teaching and Instruction, Learning Sciences, Educational Leadership, Curriculum Development, Educational Psychology, Educational Policy, Adult Education, Higher Education, Educational Philosophy, Primary Education, Secondary Education, Special Education, Educational Technology, Educational Administration, Educational Assessment, Educational History, Educational Research
+
+## Military, Security, and Defense
+Military leaders, strategists, defense analysts, security professionals, and military historians who lead, serve in, study, develop doctrine for, or analyze military forces, defense systems, security operations, and strategic affairs. Includes those commanding military units, developing military theory, implementing defense policy, advancing military technology, analyzing security threats, documenting military history, or managing defense institutions across land, sea, air, space, and cyber domains.
+Associated terms: Armed Forces, Military Strategy, Naval Science, Security Studies, Military Leadership, Defense Policy, Military History, National Security, Military Technology, Peacekeeping, Defense Administration, Army, Navy, Air Force, Military Intelligence, Military Engineering, Maritime Defense, Aerial Warfare, Strategic Studies, Military Education
+
+## Social Reform, Advocacy, and Activism
+Reformers, activists, organizers, philanthropists, and social change theorists who advocate for, organize, fund, lead, or study social change, reform movements, humanitarian causes, and civic improvements. Includes those developing reform strategies, founding social movements, championing civil and human rights, establishing humanitarian initiatives, funding social innovations, or analyzing the dynamics of social transformation across diverse cultural and political contexts.
+Associated terms: Activism, Social Movements, Humanitarianism, Social Justice, Civil Rights, Human Rights, Philanthropy, Community Organizing, Social Change, Advocacy, Non-Governmental Organizations, Political Activism, Charitable Work, Labor Organizing, Environmental Activism, Women's Rights, Social Welfare, Grassroots Movements, Protest Movements, Social Activism
+
+## Media, Journalism, and Communication
+Journalists, publishers, editors, broadcasters, media producers, communication scholars, information specialists, and librarians who gather, report, publish, broadcast, disseminate, preserve, analyze, or manage information through various media channels, information systems, and knowledge institutions. Includes those developing journalistic practices, managing media organizations, studying communication processes, preserving information resources, or advancing information technologies across traditional and digital platforms.
+Associated terms: Journalism, Publishing, Broadcasting, Information Science, News Media, Mass Communication, Digital Media, Media Studies, Communication Theory, Media Production, Information Management, Library Science, Press, Media Ethics, Telecommunications, Podcasting, Online Media, Reporting, Editorial Work, Media Criticism
+
+
+
+GUIDELINES:
+- Use exact taxonomy concept names for labels
+- May assign up to THREE concepts when evidence warrants it
+- Primary classification should be most dominant domain
+- Focus on THIS record's specific evidence
+
+Respond in JSON format:
+{
+  "label": ["Primary label", "Secondary (if applicable)", "Tertiary (if applicable)"],
+  "path": ["Primary path", "Secondary path (if applicable)", "Tertiary path (if applicable)"],
+  "rationale": "Detailed explanation with evidence from the catalog entry"
+}
+
+Path format: "Parent Category > Subcategory"

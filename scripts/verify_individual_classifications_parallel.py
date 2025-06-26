@@ -48,6 +48,7 @@ def parse_arguments():
     parser.add_argument('--max-records', type=int, help='Maximum number of records to process')
     parser.add_argument('--rate-limit-rpm', type=int, default=4000, help='Rate limit in requests per minute')
     parser.add_argument('--save-interval', type=int, default=100, help='Save progress every N completed records')
+    parser.add_argument('--print-first-prompt', help='Output the first generated prompt to this file and exit')
     return parser.parse_args()
 
 @dataclass
@@ -544,6 +545,66 @@ async def main_async():
     df, taxonomy_concepts = load_data(args, logger)
     
     logger.info(f"Loaded taxonomy with {len(taxonomy_concepts)} top-level concepts")
+    
+    # Handle print-first-prompt option
+    if args.print_first_prompt:
+        logger.info(f"Generating first prompt and writing to {args.print_first_prompt}")
+        
+        # Get first record
+        if len(df) == 0:
+            logger.error("No records in dataset")
+            return
+        
+        first_record = df.iloc[0].to_dict()
+        person_id = str(first_record.get('personId', 'Unknown'))
+        
+        # Generate taxonomy prompt
+        taxonomy_prompt = prepare_taxonomy_prompt(taxonomy_concepts)
+        
+        # Generate context and prompt for first record
+        context = f"Analyze this catalog entry for classification:\n\n"
+        context += f"Person: {first_record.get('person', 'Unknown')}\n"
+        context += f"PersonID: {first_record.get('personId', 'Unknown')}\n"
+        context += f"Identity: {first_record.get('identity', 'Unknown')}\n"
+        context += f"Composite: {first_record.get('composite', 'Unknown')}\n\n"
+        
+        # Include current classification if available
+        if 'classification_label' in first_record and pd.notna(first_record['classification_label']):
+            context += f"Current classification: {first_record['classification_label']}\n"
+        if 'classification_path' in first_record and pd.notna(first_record['classification_path']):
+            context += f"Current path: {first_record['classification_path']}\n"
+        
+        # Main prompt
+        prompt = f"""Based on this catalog entry, determine the appropriate classification.
+
+{taxonomy_prompt}
+
+GUIDELINES:
+- Use exact taxonomy concept names for labels
+- May assign up to THREE concepts when evidence warrants it
+- Primary classification should be most dominant domain
+- Focus on THIS record's specific evidence
+
+Respond in JSON format:
+{{
+  "label": ["Primary label", "Secondary (if applicable)", "Tertiary (if applicable)"],
+  "path": ["Primary path", "Secondary path (if applicable)", "Tertiary path (if applicable)"],
+  "rationale": "Detailed explanation with evidence from the catalog entry"
+}}
+
+Path format: "Parent Category > Subcategory"
+"""
+        
+        full_prompt = context + prompt
+        
+        # Write to file
+        with open(args.print_first_prompt, 'w') as f:
+            f.write(full_prompt)
+        
+        logger.info(f"First prompt written to {args.print_first_prompt}")
+        logger.info(f"Prompt length: {len(full_prompt)} characters")
+        logger.info(f"PersonID used: {person_id}")
+        return
     
     # Process records
     results = await process_records_async(df, taxonomy_concepts, args, logger)

@@ -12,7 +12,7 @@ log_dir: "logs"
 
 # Taxonomy Configuration
 taxonomy_path: "data/input/revised_taxonomy_final.json"
-classified_data_path: "data/input/training_dataset_classified.csv"
+classified_data_path: "data/input/training/training_dataset_classified_2025-06-25.csv"
 
 # Pipeline Configuration
 log_level: "INFO"
@@ -31,6 +31,7 @@ scaling_config_path: "scaling_config.yml"
 # Resource Allocation
 preprocessing_workers: 4
 preprocessing_batch_size: 10
+preprocessing_use_optimized: true  # Use SQLite-based preprocessing for large datasets
 embedding_workers: 4
 embedding_batch_size: 32
 embedding_checkpoint_batch: 1000

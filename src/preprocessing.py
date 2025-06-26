@@ -14,8 +14,11 @@ import logging
 import pickle
 import hashlib
 import time
+import sqlite3
+import tempfile
 from typing import Dict, List, Tuple, Any, Set, Optional
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from contextlib import contextmanager
 from tqdm import tqdm
 import pandas as pd
 
@@ -195,7 +198,7 @@ def create_string_dict(string_counts: Dict[str, int], field_hash_mapping: Dict[s
     
     return string_dict
 
-def process_data(config: Dict[str, Any], input_dir: str, checkpoint_dir: str) -> Tuple[Dict[str, Dict[str, str]], Dict[str, str], Dict[str, Any]]:
+def process_data(config: Dict[str, Any], input_dir: str, checkpoint_dir: str, use_optimized: bool = None) -> Tuple[Dict[str, Dict[str, str]], Dict[str, str], Dict[str, Any]]:
     """
     Process input data files and create data structures for entity resolution.
     
@@ -203,10 +206,21 @@ def process_data(config: Dict[str, Any], input_dir: str, checkpoint_dir: str) ->
         config: Configuration dictionary
         input_dir: Directory containing input files
         checkpoint_dir: Directory for saving checkpoints
+        use_optimized: Whether to use optimized SQLite-based processing for large datasets
+                      (if None, will check config['preprocessing_use_optimized'], default True)
         
     Returns:
         Tuple of (hash_lookup, string_dict, metrics)
     """
+    # Check if we should use optimized processing
+    if use_optimized is None:
+        use_optimized = config.get('preprocessing_use_optimized', True)
+    
+    if use_optimized:
+        logger.info("Using optimized SQLite-based preprocessing for large datasets")
+        return process_data_optimized(config, input_dir, checkpoint_dir)
+    
+    # Otherwise use original in-memory processing
     logger.info(f"Starting data preprocessing from {input_dir}")
     start_time = time.time()
     
@@ -319,6 +333,354 @@ def process_data(config: Dict[str, Any], input_dir: str, checkpoint_dir: str) ->
     
     return output_data, string_dict, metrics
 
+
+class OptimizedPreprocessor:
+    """Optimized preprocessor using SQLite for scalable processing"""
+    
+    def __init__(self, checkpoint_dir: str, batch_size: int = 10, max_workers: int = 4):
+        self.checkpoint_dir = checkpoint_dir
+        self.batch_size = batch_size
+        self.max_workers = max_workers
+        
+        # Create checkpoint directory
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        
+        # Initialize SQLite database for intermediate storage
+        self.db_path = os.path.join(checkpoint_dir, 'preprocessing_temp.db')
+        self._init_database()
+    
+    def _init_database(self):
+        """Initialize SQLite database with optimized settings"""
+        with self._get_connection() as conn:
+            # Enable optimizations
+            conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute("PRAGMA synchronous = NORMAL")
+            conn.execute("PRAGMA cache_size = -64000")  # 64MB cache
+            conn.execute("PRAGMA temp_store = MEMORY")
+            
+            # Create tables
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS entity_hashes (
+                    person_id TEXT PRIMARY KEY,
+                    composite_hash TEXT,
+                    person_hash TEXT,
+                    roles_hash TEXT,
+                    title_hash TEXT,
+                    provision_hash TEXT,
+                    subjects_hash TEXT,
+                    marcKey_hash TEXT
+                )
+            """)
+            
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS string_hashes (
+                    hash TEXT PRIMARY KEY,
+                    original_value TEXT,
+                    count INTEGER DEFAULT 1
+                )
+            """)
+            
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS field_hash_mapping (
+                    hash TEXT,
+                    field TEXT,
+                    count INTEGER DEFAULT 1,
+                    PRIMARY KEY (hash, field)
+                )
+            """)
+            
+            # Create indexes for performance
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_string_count ON string_hashes(count)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_field_hash ON field_hash_mapping(hash)")
+            
+            conn.commit()
+    
+    @contextmanager
+    def _get_connection(self):
+        """Get database connection with optimized settings"""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            yield conn
+        finally:
+            conn.close()
+    
+    def process_file_batch(self, file_paths: List[str], batch_num: int) -> Dict[str, Any]:
+        """Process a batch of files and write directly to SQLite"""
+        start_time = time.time()
+        total_rows = 0
+        errors = []
+        
+        # Process files in this batch
+        with self._get_connection() as conn:
+            for file_path in file_paths:
+                try:
+                    rows_processed = self._process_single_file(conn, file_path)
+                    total_rows += rows_processed
+                except Exception as e:
+                    logger.error(f"Error processing file {file_path}: {str(e)}")
+                    errors.append((file_path, str(e)))
+            
+            conn.commit()
+        
+        elapsed_time = time.time() - start_time
+        logger.info(f"Batch {batch_num}: Processed {len(file_paths)} files, {total_rows} rows in {elapsed_time:.2f}s")
+        
+        return {
+            'batch_num': batch_num,
+            'files_processed': len(file_paths),
+            'rows_processed': total_rows,
+            'elapsed_time': elapsed_time,
+            'errors': errors
+        }
+    
+    def _process_single_file(self, conn: sqlite3.Connection, file_path: str) -> int:
+        """Process a single file and insert data into SQLite"""
+        # Load CSV
+        df = pd.read_csv(file_path, na_values='', keep_default_na=False)
+        
+        # Expected fields
+        required_fields = ['composite', 'marcKey', 'person', 'roles', 'title', 'provision', 'subjects', 'personId']
+        
+        # Fill missing fields
+        for field in required_fields:
+            if field not in df.columns:
+                df[field] = ''
+        
+        rows_processed = 0
+        entity_batch = []
+        string_batch = []
+        field_mapping_batch = []
+        
+        for _, row in df.iterrows():
+            person_id = str(row['personId'])
+            if not person_id:
+                continue
+            
+            # Hash all fields
+            hashes = {}
+            for field in required_fields:
+                if field == 'personId':
+                    continue
+                
+                value = str(row[field]) if pd.notna(row[field]) else ''
+                hash_val = hash_string(value)
+                hashes[f"{field}_hash"] = hash_val
+                
+                # Track string for later retrieval
+                if hash_val != "NULL" and value:
+                    string_batch.append((hash_val, value))
+                    field_mapping_batch.append((hash_val, field))
+            
+            # Add entity record
+            entity_batch.append((person_id,) + tuple(hashes.get(f"{field}_hash", "NULL") 
+                                                    for field in required_fields if field != 'personId'))
+            
+            rows_processed += 1
+            
+            # Batch insert when we have enough records
+            if len(entity_batch) >= 1000:
+                self._batch_insert_entities(conn, entity_batch)
+                self._batch_insert_strings(conn, string_batch)
+                self._batch_insert_field_mappings(conn, field_mapping_batch)
+                entity_batch = []
+                string_batch = []
+                field_mapping_batch = []
+        
+        # Insert remaining records
+        if entity_batch:
+            self._batch_insert_entities(conn, entity_batch)
+            self._batch_insert_strings(conn, string_batch)
+            self._batch_insert_field_mappings(conn, field_mapping_batch)
+        
+        return rows_processed
+    
+    def _batch_insert_entities(self, conn: sqlite3.Connection, batch: List[Tuple]):
+        """Batch insert entity records"""
+        conn.executemany("""
+            INSERT OR REPLACE INTO entity_hashes 
+            (person_id, composite_hash, person_hash, roles_hash, title_hash, provision_hash, subjects_hash, marcKey_hash)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, batch)
+    
+    def _batch_insert_strings(self, conn: sqlite3.Connection, batch: List[Tuple[str, str]]):
+        """Batch insert/update string records"""
+        for hash_val, original_value in batch:
+            conn.execute("""
+                INSERT INTO string_hashes (hash, original_value, count)
+                VALUES (?, ?, 1)
+                ON CONFLICT(hash) DO UPDATE SET
+                    count = count + 1,
+                    original_value = CASE 
+                        WHEN original_value IS NULL OR original_value = '' 
+                        THEN excluded.original_value 
+                        ELSE original_value 
+                    END
+            """, (hash_val, original_value))
+    
+    def _batch_insert_field_mappings(self, conn: sqlite3.Connection, batch: List[Tuple[str, str]]):
+        """Batch insert/update field mapping records"""
+        conn.executemany("""
+            INSERT INTO field_hash_mapping (hash, field, count)
+            VALUES (?, ?, 1)
+            ON CONFLICT(hash, field) DO UPDATE SET
+                count = count + 1
+        """, batch)
+    
+    def process_all_files(self, input_files: List[str]) -> Dict[str, Any]:
+        """Process all CSV files"""
+        start_time = time.time()
+        
+        logger.info(f"Processing {len(input_files)} files using optimized SQLite backend")
+        
+        # Process files in batches
+        total_rows = 0
+        batch_metrics = []
+        
+        for i in range(0, len(input_files), self.batch_size):
+            batch_files = input_files[i:i+self.batch_size]
+            batch_num = i // self.batch_size + 1
+            
+            logger.info(f"Processing batch {batch_num}/{(len(input_files)-1)//self.batch_size + 1}")
+            
+            # Process this batch
+            metrics = self.process_file_batch(batch_files, batch_num)
+            total_rows += metrics['rows_processed']
+            batch_metrics.append(metrics)
+        
+        elapsed_time = time.time() - start_time
+        
+        return {
+            'status': 'completed',
+            'elapsed_time': elapsed_time,
+            'total_files': len(input_files),
+            'total_rows': total_rows,
+            'batch_metrics': batch_metrics
+        }
+    
+    def export_to_pickle(self) -> Tuple[Dict[str, Dict[str, str]], Dict[str, str], Dict[str, int]]:
+        """Export SQLite data to pickle format compatible with existing pipeline"""
+        logger.info("Exporting data from SQLite to pickle format")
+        
+        output_data = {}
+        string_dict = {}
+        string_counts = {}
+        
+        with self._get_connection() as conn:
+            # Export entity hashes
+            cursor = conn.execute("""
+                SELECT person_id, composite_hash, person_hash, roles_hash, 
+                       title_hash, provision_hash, subjects_hash, marcKey_hash
+                FROM entity_hashes
+            """)
+            
+            for row in cursor:
+                person_id = row['person_id']
+                output_data[person_id] = {
+                    'composite': row['composite_hash'],
+                    'person': row['person_hash'],
+                    'roles': row['roles_hash'],
+                    'title': row['title_hash'],
+                    'provision': row['provision_hash'],
+                    'subjects': row['subjects_hash'],
+                    'marcKey': row['marcKey_hash']
+                }
+            
+            # Export string dictionary and counts
+            cursor = conn.execute("SELECT hash, original_value, count FROM string_hashes")
+            for row in cursor:
+                hash_val = row['hash']
+                string_dict[hash_val] = row['original_value'] or f"Unknown string with hash {hash_val}"
+                string_counts[hash_val] = row['count']
+        
+        # Save to pickle files
+        hash_lookup_path = os.path.join(self.checkpoint_dir, 'hash_lookup.pkl')
+        string_dict_path = os.path.join(self.checkpoint_dir, 'string_dict.pkl')
+        string_counts_path = os.path.join(self.checkpoint_dir, 'string_counts.pkl')
+        
+        with open(hash_lookup_path, 'wb') as f:
+            pickle.dump(output_data, f, protocol=pickle.HIGHEST_PROTOCOL)
+        
+        with open(string_dict_path, 'wb') as f:
+            pickle.dump(string_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
+        
+        with open(string_counts_path, 'wb') as f:
+            pickle.dump(string_counts, f, protocol=pickle.HIGHEST_PROTOCOL)
+        
+        # Also save field_hash_mapping for compatibility
+        field_hash_mapping = {}
+        with self._get_connection() as conn:
+            cursor = conn.execute("SELECT hash, field, count FROM field_hash_mapping")
+            for row in cursor:
+                hash_val = row['hash']
+                if hash_val not in field_hash_mapping:
+                    field_hash_mapping[hash_val] = {}
+                field_hash_mapping[hash_val][row['field']] = row['count']
+        
+        field_hash_mapping_path = os.path.join(self.checkpoint_dir, 'field_hash_mapping.pkl')
+        with open(field_hash_mapping_path, 'wb') as f:
+            pickle.dump(field_hash_mapping, f, protocol=pickle.HIGHEST_PROTOCOL)
+        
+        logger.info(f"Exported {len(output_data)} entities, {len(string_dict)} unique strings")
+        
+        return output_data, string_dict, string_counts
+    
+    def cleanup(self):
+        """Remove temporary SQLite database"""
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+            logger.info("Cleaned up temporary database")
+
+
+def process_data_optimized(config: Dict[str, Any], input_dir: str, checkpoint_dir: str) -> Tuple[Dict[str, Dict[str, str]], Dict[str, str], Dict[str, Any]]:
+    """
+    Optimized preprocessing using SQLite for scalable processing
+    
+    Args:
+        config: Configuration dictionary
+        input_dir: Directory containing input files
+        checkpoint_dir: Directory for saving checkpoints
+        
+    Returns:
+        Tuple of (hash_lookup, string_dict, metrics)
+    """
+    logger.info(f"Starting optimized preprocessing from {input_dir}")
+    
+    # Get list of input files
+    input_files = []
+    for file in os.listdir(input_dir):
+        if file.endswith('.csv'):
+            input_files.append(os.path.join(input_dir, file))
+    
+    if not input_files:
+        logger.warning(f"No CSV files found in {input_dir}")
+        return {}, {}, {'status': 'no_files_found'}
+    
+    # Get configuration parameters
+    batch_size = config.get("preprocessing_batch_size", 10)
+    max_workers = config.get("preprocessing_workers", 4)
+    
+    # Create preprocessor
+    preprocessor = OptimizedPreprocessor(checkpoint_dir, batch_size, max_workers)
+    
+    try:
+        # Process all files
+        metrics = preprocessor.process_all_files(input_files)
+        
+        # Export to pickle format
+        output_data, string_dict, string_counts = preprocessor.export_to_pickle()
+        
+        # Add final statistics to metrics
+        metrics['entity_count'] = len(output_data)
+        metrics['unique_strings'] = len(string_dict)
+        
+        return output_data, string_dict, metrics
+        
+    finally:
+        # Clean up temporary database
+        preprocessor.cleanup()
+
+
 def save_checkpoint(output_data: Dict[str, Dict[str, str]], string_counts: Dict[str, int],
                   field_hash_mapping: Dict[str, Dict[str, int]], checkpoint_dir: str, batch_num: int) -> None:
     """
@@ -427,6 +789,7 @@ if __name__ == "__main__":
     parser.add_argument('--config', default='config.yml', help='Path to configuration file')
     parser.add_argument('--input-dir', help='Directory containing input files')
     parser.add_argument('--checkpoint-dir', help='Directory for saving checkpoints')
+    parser.add_argument('--optimized', action='store_true', help='Use optimized SQLite-based preprocessing (recommended for large datasets)')
     args = parser.parse_args()
     
     # Load configuration
@@ -447,4 +810,9 @@ if __name__ == "__main__":
     )
     
     # Run preprocessing
-    main(args.config)
+    input_dir = config.get('input_dir', 'data/input')
+    checkpoint_dir = config.get('checkpoint_dir', 'data/checkpoints')
+    
+    # Use optimized flag if provided, otherwise let process_data check config
+    use_optimized = args.optimized if args.optimized else None
+    output_data, string_dict, metrics = process_data(config, input_dir, checkpoint_dir, use_optimized=use_optimized)
