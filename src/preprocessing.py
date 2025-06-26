@@ -864,9 +864,8 @@ def process_data_optimized(config: Dict[str, Any], input_dir: str, checkpoint_di
                    f"{batch_rows} rows in {batch_elapsed:.2f}s "
                    f"({batch_rows/batch_elapsed:.0f} rows/sec)")
         
-        # Save checkpoint after every 10 batches
-        if batch_num % 10 == 0:
-            save_checkpoint(output_data, dict(string_counts), dict(field_hash_mapping), checkpoint_dir, batch_num)
+        # Skip intermediate checkpoints - they're too expensive with large datasets
+        # Only save at the end
     
     # Save final results
     os.makedirs(checkpoint_dir, exist_ok=True)

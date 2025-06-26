@@ -17,7 +17,7 @@ classified_data_path: "data/input/training/training_dataset_classified_2025-06-2
 # Pipeline Configuration
 log_level: "INFO"
 debug_features: false
-embed_fields: ["composite", "person", "title", "roles", "marcKey"]
+embed_fields: ["composite", "person", "title", "roles", "subjects", "genres"]
 skip_fields: ["attribution", "provision", "subjects", "genres", "relatedWork", "recordId", "personId"]
 
 # Entity Matching Enhancement Configuration
