@@ -506,39 +506,56 @@ class OptimizedPreprocessor:
             if rows_processed == 0:
                 return None
             
-            # Vectorized processing
+            # Convert all fields to string arrays for better performance
+            str_columns = {}
+            for field in required_fields:
+                if field != 'personId':
+                    str_columns[field] = df[field].fillna('').astype(str).values
+            
+            # Collect all unique values across all fields
+            all_unique_values = set()
+            field_to_unique = {}
+            
+            for field, values in str_columns.items():
+                unique_vals = pd.unique(values)
+                field_to_unique[field] = unique_vals
+                all_unique_values.update(unique_vals)
+            
+            # Remove empty string
+            all_unique_values.discard('')
+            
+            # Hash all unique values at once - much faster than repeated hashing
+            value_to_hash = {}
+            for value in all_unique_values:
+                if value:
+                    value_to_hash[value] = hash_string(value)
+            value_to_hash[''] = 'NULL'
+            
+            # Build string records and field mappings
             string_records = {}
             field_mappings = {}
             
-            # Process all fields at once
-            for field in required_fields:
-                if field == 'personId':
-                    continue
-                
-                # Vectorized string conversion and hashing
-                values = df[field].fillna('').astype(str)
-                
-                # Process unique values only
-                unique_values = values.unique()
-                for value in unique_values:
-                    if value:  # Skip empty strings
-                        hash_val = hash_string(value)
+            for field, unique_vals in field_to_unique.items():
+                for value in unique_vals:
+                    if value and value in value_to_hash:
+                        hash_val = value_to_hash[value]
                         if hash_val != "NULL":
                             string_records[hash_val] = value
                             field_key = f"{hash_val}_{field}"
                             field_mappings[field_key] = (hash_val, field)
             
-            # Build entity records using vectorized operations
-            field_hashes = {}
-            for field in required_fields:
-                if field == 'personId':
-                    continue
-                values = df[field].fillna('').astype(str)
-                field_hashes[field] = values.apply(hash_string)
+            # Build entity records using pre-computed hashes
+            person_ids = df['personId'].astype(str).values
             
-            person_ids = df['personId'].astype(str).tolist()
-            hash_columns = [field_hashes[field].tolist() for field in required_fields if field != 'personId']
-            entity_records = [(pid,) + tuple(hashes) for pid, hashes in zip(person_ids, zip(*hash_columns))]
+            # Create hash arrays by mapping values through our hash dictionary
+            entity_records = []
+            for i in range(len(person_ids)):
+                record = [person_ids[i]]
+                for field in required_fields:
+                    if field != 'personId':
+                        value = str_columns[field][i]
+                        record.append(value_to_hash[value])
+                entity_records.append(tuple(record))
             
             return {
                 'entities': entity_records,
