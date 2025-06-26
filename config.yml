@@ -4,7 +4,7 @@
 random_seed: 42
 
 # Directory Paths
-input_dir: "data/input/training"
+input_dir: "/home/DataChemist/data/ops/split"
 output_dir: "data/output"
 checkpoint_dir: "data/checkpoints"
 ground_truth_dir: "data/ground_truth"

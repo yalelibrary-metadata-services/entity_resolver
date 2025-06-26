@@ -37,7 +37,7 @@ def hash_string(string_value: str) -> str:
     Returns:
         CRC32 hash of the string as hex
     """
-    if not string_value:
+    if not string_value or string_value == 'nan':
         return "NULL"
     
     # Use CRC32 for faster hashing (2-3x faster than MD5)
@@ -940,8 +940,8 @@ def _process_file_optimized(file_path: str) -> Optional[Dict[str, Any]]:
         df_valid = df.loc[valid_mask, required_fields]
         rows_processed = len(df_valid)
         
-        # Convert to numpy for faster processing
-        data_array = df_valid.values
+        # Convert to numpy for faster processing - ensure all values are strings
+        data_array = df_valid.astype(str).values
         person_ids = data_array[:, required_fields.index('personId')]
         
         # Collect unique values across all fields in one pass
@@ -953,10 +953,10 @@ def _process_file_optimized(file_path: str) -> Optional[Dict[str, Any]]:
                 col_data = data_array[:, col_idx]
                 field_cols[field] = col_data
                 
-                # Get unique values
-                unique_vals = np.unique(col_data)
+                # Get unique values - convert to string to avoid comparison issues
+                unique_vals = pd.unique(col_data.astype(str))
                 for val in unique_vals:
-                    if val:  # Skip empty strings
+                    if val and val != 'nan':  # Skip empty strings and 'nan'
                         unique_collector[val].add(field)
         
         # Hash all unique values once
