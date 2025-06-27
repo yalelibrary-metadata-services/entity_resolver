@@ -1,0 +1,30 @@
+2025-06-26 23:14:10,454 - src.orchestrating - INFO - Loading preprocessed data from checkpoints
+2025-06-26 23:14:51,683 - src.preprocessing - INFO - Loaded hash lookup with 17693191 entities from data/checkpoints/hash_lookup.pkl
+2025-06-26 23:19:39,478 - src.preprocessing - INFO - Loaded string dictionary with 44338979 entries from data/checkpoints/string_dict.pkl
+2025-06-26 23:19:39,480 - src.orchestrating - INFO - Preprocessing complete: 17693191 entities, 44338979 unique strings
+2025-06-26 23:21:47,701 - src.orchestrating - INFO - Loaded field hash mapping with 44338979 entries
+2025-06-26 23:22:20,344 - src.orchestrating - INFO - Loaded string counts with 44338979 entries
+2025-06-26 23:22:20,345 - src.orchestrating - INFO - Starting unified embedding and indexing process
+2025-06-26 23:22:20,345 - src.embedding_and_indexing - INFO - Starting unified embedding and indexing process
+2025-06-26 23:22:20,677 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/.well-known/openid-configuration "HTTP/1.1 404 Not Found"
+2025-06-26 23:22:20,787 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2025-06-26 23:22:21,011 - httpx - INFO - HTTP Request: GET https://pypi.org/pypi/weaviate-client/json "HTTP/1.1 200 OK"
+2025-06-26 23:22:21,035 - src.embedding_and_indexing - INFO - Connected to Weaviate at http://localhost:8080 (gRPC port: 50051)
+2025-06-26 23:22:21,045 - httpx - INFO - HTTP Request: DELETE http://localhost:8080/v1/schema/EntityString "HTTP/1.1 200 OK"
+2025-06-26 23:22:21,045 - src.embedding_and_indexing - INFO - Deleted existing EntityString collection
+2025-06-26 23:22:21,045 - src.embedding_and_indexing - INFO - Creating new EntityString collection with OpenAI Vectorizer
+2025-06-26 23:22:21,210 - httpx - INFO - HTTP Request: POST http://localhost:8080/v1/schema "HTTP/1.1 200 OK"
+2025-06-26 23:22:21,211 - src.embedding_and_indexing - INFO - Created EntityString collection with OpenAI Vectorizer configuration
+2025-06-26 23:22:21,211 - src.embedding_and_indexing - INFO - Initialized EmbeddingAndIndexingPipeline with model text-embedding-3-small
+2025-06-26 23:22:21,211 - src.embedding_and_indexing - INFO - Starting unified embedding and indexing process
+2025-06-26 23:22:21,212 - src.embedding_and_indexing - INFO - No checkpoint found at data/checkpoints/processed_hashes.pkl
+2025-06-26 23:22:21,212 - src.embedding_and_indexing - INFO - Selecting strings to process based on field types
+2025-06-26 23:26:42,598 - src.embedding_and_indexing - INFO - Selected 31801834 string-field pairs to process
+2025-06-26 23:26:42,598 - src.embedding_and_indexing - INFO - Processing status: 0/31634008 strings already processed (0.0%)
+2025-06-26 23:26:42,598 - src.embedding_and_indexing - INFO -   Field 'composite': 11928165 strings selected
+2025-06-26 23:26:42,598 - src.embedding_and_indexing - INFO -   Field 'person': 4981172 strings selected
+2025-06-26 23:26:42,598 - src.embedding_and_indexing - INFO -   Field 'title': 8445536 strings selected
+2025-06-26 23:26:42,599 - src.embedding_and_indexing - INFO -   Field 'roles': 8952 strings selected
+2025-06-26 23:26:42,599 - src.embedding_and_indexing - INFO -   Field 'subjects': 6438009 strings selected
+2025-06-26 23:26:42,599 - src.embedding_and_indexing - INFO -   Field 'genres': 0 strings selected
+2025-06-26 23:26:42,599 - src.embedding_and_indexing - INFO - Using 4 worker threads on system with 64 cores
