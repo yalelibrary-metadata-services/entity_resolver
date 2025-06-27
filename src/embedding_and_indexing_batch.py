@@ -51,6 +51,8 @@ class BatchEmbeddingPipeline:
             config: Configuration dictionary with batch processing parameters
         """
         self.config = config
+        self.weaviate_client = None  # Initialize as None first
+        self.collection = None
         
         # OpenAI API configuration
         self.api_key = config.get("openai_api_key", os.environ.get("OPENAI_API_KEY"))
@@ -85,6 +87,26 @@ class BatchEmbeddingPipeline:
         self.processed_hashes = set()
         
         logger.info(f"Initialized BatchEmbeddingPipeline with model {self.embedding_model}")
+    
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit with proper cleanup."""
+        self.close()
+    
+    def close(self):
+        """Properly close all connections."""
+        if self.weaviate_client is not None:
+            try:
+                self.weaviate_client.close()
+                logger.debug("Weaviate client connection closed")
+            except Exception as e:
+                logger.debug(f"Error closing Weaviate client: {e}")
+            finally:
+                self.weaviate_client = None
+                self.collection = None
     
     def _init_weaviate_client(self):
         """Initialize and return a Weaviate client based on configuration."""
@@ -391,7 +413,7 @@ class BatchEmbeddingPipeline:
     
     @retry(
         wait=wait_exponential(multiplier=1, min=4, max=60),
-        stop=stop_after_attempt(5)
+        stop=stop_after_attempt(3)
     )
     def _download_batch_results(self, output_file_id: str, output_path: str) -> str:
         """
@@ -407,8 +429,17 @@ class BatchEmbeddingPipeline:
         logger.info(f"Downloading batch results from file: {output_file_id}")
         
         try:
-            # Get file content
-            file_response = self.openai_client.files.content(output_file_id)
+            # Get file content with extended timeout
+            import httpx
+            client = self.openai_client._client
+            old_timeout = client.timeout
+            try:
+                # Extend timeout to 5 minutes for large file downloads
+                client.timeout = httpx.Timeout(300.0)
+                file_response = self.openai_client.files.content(output_file_id)
+            finally:
+                # Restore original timeout
+                client.timeout = old_timeout
             
             # Save to local file
             with open(output_path, 'wb') as f:
@@ -418,8 +449,15 @@ class BatchEmbeddingPipeline:
             return output_path
             
         except Exception as e:
-            logger.error(f"Error downloading batch results: {str(e)}")
-            raise
+            error_msg = str(e)
+            # Check if it's a gateway timeout
+            if "504" in error_msg or "Gateway time-out" in error_msg:
+                logger.error(f"OpenAI API gateway timeout downloading {output_file_id}. This is an OpenAI server issue.")
+                logger.info("You can try again later when OpenAI's servers are less busy.")
+                raise Exception(f"OpenAI gateway timeout (server issue): {output_file_id}")
+            else:
+                logger.error(f"Error downloading batch results: {error_msg}")
+                raise
     
     def _process_batch_results(self, results_path: str, custom_id_mapping: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
@@ -490,6 +528,89 @@ class BatchEmbeddingPipeline:
                     failed_requests += 1
         
         logger.info(f"Processed batch results: {successful_requests} successful, {failed_requests} failed")
+        return items_to_index
+    
+    def _process_batch_results_without_mapping(self, results_path: str) -> List[Dict[str, Any]]:
+        """
+        Process downloaded batch results for recovered jobs without custom_id_mapping.
+        This creates a simplified mapping based on the custom_id format.
+        
+        Args:
+            results_path: Path to downloaded results file
+            
+        Returns:
+            List of items ready for indexing
+        """
+        logger.info(f"Processing batch results (recovered job) from: {results_path}")
+        
+        items_to_index = []
+        successful_requests = 0
+        failed_requests = 0
+        
+        with open(results_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                try:
+                    result = json.loads(line.strip())
+                    custom_id = result.get('custom_id')
+                    
+                    if not custom_id:
+                        logger.warning("No custom_id in result")
+                        continue
+                    
+                    # Check if request was successful
+                    response = result.get('response')
+                    if response and response.get('status_code') == 200:
+                        # Extract embedding
+                        body = response.get('body', {})
+                        data = body.get('data', [])
+                        
+                        if data and len(data) > 0:
+                            embedding = data[0].get('embedding')
+                            if embedding:
+                                # Parse custom_id to extract info: format is "hash_field_index"
+                                try:
+                                    parts = custom_id.split('_')
+                                    if len(parts) >= 3:
+                                        hash_value = '_'.join(parts[:-2])  # Everything except last 2 parts
+                                        field_type = parts[-2]
+                                        index = parts[-1]
+                                        
+                                        # We don't have the original string, but we can still index
+                                        items_to_index.append({
+                                            'hash_value': hash_value,
+                                            'original_string': f"Recovered string {hash_value}",  # Placeholder
+                                            'field_type': field_type,
+                                            'frequency': 1,  # Default frequency
+                                            'vector': np.array(embedding, dtype=np.float32)
+                                        })
+                                        successful_requests += 1
+                                    else:
+                                        logger.warning(f"Cannot parse custom_id format: {custom_id}")
+                                        failed_requests += 1
+                                except Exception as parse_error:
+                                    logger.warning(f"Error parsing custom_id {custom_id}: {parse_error}")
+                                    failed_requests += 1
+                            else:
+                                logger.warning(f"No embedding found for custom_id: {custom_id}")
+                                failed_requests += 1
+                        else:
+                            logger.warning(f"No data in response for custom_id: {custom_id}")
+                            failed_requests += 1
+                    else:
+                        # Request failed
+                        error_info = result.get('error', {})
+                        logger.warning(f"Failed request for custom_id {custom_id}: {error_info}")
+                        failed_requests += 1
+                        
+                except json.JSONDecodeError as e:
+                    logger.error(f"Error parsing result line: {str(e)}")
+                    failed_requests += 1
+                except Exception as e:
+                    logger.error(f"Error processing result: {str(e)}")
+                    failed_requests += 1
+        
+        logger.info(f"Processed batch results (recovered): {successful_requests} successful, {failed_requests} failed")
+        logger.warning("Note: Original string values not available for recovered jobs - using placeholders")
         return items_to_index
     
     def _index_embeddings_batch(self, items_to_index: List[Dict[str, Any]]) -> int:
@@ -1063,11 +1184,15 @@ class BatchEmbeddingPipeline:
                 results_file_path = os.path.join(checkpoint_dir, f'batch_results_{job_info["batch_idx"]}.jsonl')
                 self._download_batch_results(batch_status.output_file_id, results_file_path)
                 
-                # Process results
-                items_to_index = self._process_batch_results(
-                    results_file_path, 
-                    job_info['file_metadata']['custom_id_mapping']
-                )
+                # Process results - handle recovered jobs without file_metadata
+                if 'file_metadata' in job_info and 'custom_id_mapping' in job_info['file_metadata']:
+                    # Original job with full metadata
+                    custom_id_mapping = job_info['file_metadata']['custom_id_mapping']
+                    items_to_index = self._process_batch_results(results_file_path, custom_id_mapping)
+                else:
+                    # Recovered job - process without custom_id_mapping
+                    logger.warning(f"Job {batch_job_id} is recovered - processing without custom_id_mapping")
+                    items_to_index = self._process_batch_results_without_mapping(results_file_path)
                 
                 # Index in Weaviate
                 indexed_count = self._index_embeddings_batch(items_to_index)
@@ -1240,11 +1365,15 @@ class BatchEmbeddingPipeline:
                     results_file_path = os.path.join(checkpoint_dir, f'batch_results_{job_info["batch_idx"]}.jsonl')
                     self._download_batch_results(job_result['output_file_id'], results_file_path)
                     
-                    # Process results
-                    items_to_index = self._process_batch_results(
-                        results_file_path, 
-                        job_info['file_metadata']['custom_id_mapping']
-                    )
+                    # Process results - handle recovered jobs without file_metadata
+                    if 'file_metadata' in job_info and 'custom_id_mapping' in job_info['file_metadata']:
+                        # Original job with full metadata
+                        custom_id_mapping = job_info['file_metadata']['custom_id_mapping']
+                        items_to_index = self._process_batch_results(results_file_path, custom_id_mapping)
+                    else:
+                        # Recovered job - process without custom_id_mapping
+                        logger.warning(f"Job {batch_job_id} is recovered - processing without custom_id_mapping")
+                        items_to_index = self._process_batch_results_without_mapping(results_file_path)
                     
                     # Index in Weaviate
                     indexed_count = self._index_embeddings_batch(items_to_index)

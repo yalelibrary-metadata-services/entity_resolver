@@ -66,39 +66,31 @@ def create_jobs(config: Dict[str, Any]) -> None:
     
     print(f"📊 Loaded preprocessing data: {len(string_dict)} strings")
     
-    # Initialize batch pipeline
-    pipeline = None
+    # Initialize batch pipeline with proper context management
     try:
-        pipeline = BatchEmbeddingPipeline(config)
-        
-        # Create batch jobs
-        result = pipeline.create_batch_jobs_only(
-            string_dict, field_hash_mapping, string_counts, checkpoint_dir
-        )
-        
-        if result['status'] == 'jobs_created':
-            print(f"\n✅ Successfully created {result['jobs_created']} batch jobs!")
-            print(f"📋 Total requests: {result['total_requests']:,}")
-            print(f"💰 Estimated cost savings: ${result['estimated_cost_savings']:.4f}")
-            print(f"⏱️  Creation time: {result['elapsed_time']:.2f} seconds")
-            print(f"\n📋 Next steps:")
-            print(f"   1. Wait for OpenAI to process your jobs (up to 24 hours)")
-            print(f"   2. Check status: python batch_manager.py --status")
-            print(f"   3. Download results: python batch_manager.py --download")
-        elif result['status'] == 'no_work':
-            print("ℹ️  No new work to process - all eligible strings already processed")
-        else:
-            print(f"❌ Unexpected result: {result}")
+        with BatchEmbeddingPipeline(config) as pipeline:
+            # Create batch jobs
+            result = pipeline.create_batch_jobs_only(
+                string_dict, field_hash_mapping, string_counts, checkpoint_dir
+            )
             
+            if result['status'] == 'jobs_created':
+                print(f"\n✅ Successfully created {result['jobs_created']} batch jobs!")
+                print(f"📋 Total requests: {result['total_requests']:,}")
+                print(f"💰 Estimated cost savings: ${result['estimated_cost_savings']:.4f}")
+                print(f"⏱️  Creation time: {result['elapsed_time']:.2f} seconds")
+                print(f"\n📋 Next steps:")
+                print(f"   1. Wait for OpenAI to process your jobs (up to 24 hours)")
+                print(f"   2. Check status: python batch_manager.py --status")
+                print(f"   3. Download results: python batch_manager.py --download")
+            elif result['status'] == 'no_work':
+                print("ℹ️  No new work to process - all eligible strings already processed")
+            else:
+                print(f"❌ Unexpected result: {result}")
+                
     except Exception as e:
         print(f"❌ Error creating batch jobs: {str(e)}")
         sys.exit(1)
-    finally:
-        if pipeline and hasattr(pipeline, 'weaviate_client'):
-            try:
-                pipeline.weaviate_client.close()
-            except:
-                pass
 
 def check_status(config: Dict[str, Any]) -> None:
     """Check status of batch jobs."""
@@ -177,6 +169,295 @@ def download_results(config: Dict[str, Any]) -> None:
             except:
                 pass
 
+def cancel_uncompleted_jobs(config: Dict[str, Any]) -> None:
+    """Cancel all uncompleted batch jobs to free up token quota."""
+    print("🛑 Canceling uncompleted batch jobs...")
+    
+    checkpoint_dir = config.get("checkpoint_dir", "data/checkpoints")
+    
+    # Initialize batch pipeline with proper context management
+    try:
+        with BatchEmbeddingPipeline(config) as pipeline:
+            # Always discover jobs from OpenAI API (don't rely on checkpoints)
+            print("📡 Discovering all batch jobs from OpenAI API...")
+            
+            try:
+                # Discover all entity resolution batch jobs from OpenAI
+                all_jobs = {}
+                after = None
+                total_discovered = 0
+                
+                # Paginate through ALL batch jobs to find ours
+                while True:
+                    if after:
+                        batches = pipeline.openai_client.batches.list(limit=100, after=after)
+                    else:
+                        batches = pipeline.openai_client.batches.list(limit=100)
+                    
+                    total_discovered += len(batches.data)
+                    
+                    # Process this page of results
+                    for batch in batches.data:
+                        # Look for our batch jobs (filter by metadata)
+                        metadata = getattr(batch, 'metadata', {})
+                        if (metadata and 
+                            metadata.get('created_by') == 'embedding_and_indexing_batch'):
+                            all_jobs[batch.id] = batch
+                    
+                    # Check if there are more results
+                    if not batches.has_more:
+                        break
+                        
+                    # Get the last batch ID for pagination
+                    if batches.data:
+                        after = batches.data[-1].id
+                    else:
+                        break
+                
+                print(f"📊 Scanned {total_discovered} total batches, found {len(all_jobs)} entity resolution jobs")
+                
+                if not all_jobs:
+                    print("ℹ️  No entity resolution batch jobs found in OpenAI API")
+                    return
+                
+            except Exception as e:
+                print(f"❌ Error discovering jobs from OpenAI API: {e}")
+                return
+            
+            # Find jobs that can be cancelled
+            print(f"📡 Checking status of {len(all_jobs)} discovered batch jobs...")
+            
+            cancellable_statuses = ['pending', 'validating', 'in_progress', 'finalizing']
+            jobs_to_cancel = []
+            completed_jobs = []
+            already_failed = []
+            cancelled_jobs = []
+            
+            for job_id, batch_status in all_jobs.items():
+                try:
+                    current_status = batch_status.status
+                    
+                    if current_status in cancellable_statuses:
+                        jobs_to_cancel.append((job_id, current_status))
+                    elif current_status == 'completed':
+                        completed_jobs.append(job_id)
+                    elif current_status == 'failed':
+                        already_failed.append(job_id)
+                    elif current_status == 'cancelled':
+                        cancelled_jobs.append(job_id)
+                        
+                except Exception as e:
+                    print(f"⚠️  Could not check job {job_id}: {e}")
+        
+        # Show summary
+        print(f"\n📊 Job Status Summary:")
+        print(f"   Can be cancelled: {len(jobs_to_cancel)}")
+        print(f"   Already completed: {len(completed_jobs)}")
+        print(f"   Already failed: {len(already_failed)}")
+        print(f"   Already cancelled: {len(cancelled_jobs)}")
+        
+        if not jobs_to_cancel:
+            print("ℹ️  No jobs found that can be cancelled")
+            return
+        
+        # Confirm cancellation
+        print(f"\n⚠️  About to cancel {len(jobs_to_cancel)} jobs:")
+        for job_id, status in jobs_to_cancel[:5]:  # Show first 5
+            print(f"   {job_id[:12]}... ({status})")
+        if len(jobs_to_cancel) > 5:
+            print(f"   ... and {len(jobs_to_cancel) - 5} more")
+        
+        print(f"\n🚨 WARNING: This will:")
+        print(f"   • Cancel {len(jobs_to_cancel)} batch jobs")
+        print(f"   • Free up token quota immediately")
+        print(f"   • Jobs cannot be resumed once cancelled")
+        
+        # Get user confirmation
+        try:
+            response = input(f"\nDo you want to proceed? (yes/no): ").strip().lower()
+            if response not in ['yes', 'y']:
+                print("❌ Cancelled by user")
+                return
+        except KeyboardInterrupt:
+            print("\n❌ Cancelled by user")
+            return
+        
+        # Cancel jobs
+        print(f"\n🛑 Cancelling {len(jobs_to_cancel)} jobs...")
+        cancelled_count = 0
+        failed_to_cancel = 0
+        
+        for job_id, status in jobs_to_cancel:
+            try:
+                # Cancel the job
+                cancelled_batch = pipeline.openai_client.batches.cancel(job_id)
+                
+                # Update local tracking
+                pipeline.batch_jobs[job_id]['status'] = 'cancelled'
+                
+                cancelled_count += 1
+                print(f"   ✅ Cancelled {job_id[:12]}... ({status})")
+                
+            except Exception as e:
+                failed_to_cancel += 1
+                print(f"   ❌ Failed to cancel {job_id[:12]}...: {e}")
+        
+        # Update checkpoint if we have local tracking
+        try:
+            pipeline.load_checkpoint(checkpoint_dir)
+            # Update status for cancelled jobs in local tracking
+            for job_id, status in jobs_to_cancel[:cancelled_count]:
+                if job_id in pipeline.batch_jobs:
+                    pipeline.batch_jobs[job_id]['status'] = 'cancelled'
+            pipeline.save_checkpoint(checkpoint_dir)
+        except Exception as e:
+            print(f"ℹ️  Could not update checkpoint (this is ok): {e}")
+        
+        print(f"\n📊 Cancellation Summary:")
+        print(f"   Successfully cancelled: {cancelled_count}")
+        print(f"   Failed to cancel: {failed_to_cancel}")
+        print(f"   Token quota freed up immediately")
+        
+        if cancelled_count > 0:
+            print(f"\n📋 Next steps:")
+            print(f"   1. Check status: python batch_manager.py --status")
+            print(f"   2. Resubmit failed jobs: python batch_manager.py --resubmit")
+            print(f"   3. Or create new jobs: python batch_manager.py --create")
+        
+    except Exception as e:
+        print(f"❌ Error cancelling jobs: {str(e)}")
+        sys.exit(1)
+
+def resubmit_failed_jobs(config: Dict[str, Any]) -> None:
+    """Resubmit failed jobs that failed due to token limit."""
+    print("🔄 Resubmitting failed batch jobs...")
+    
+    checkpoint_dir = config.get("checkpoint_dir", "data/checkpoints")
+    
+    # Initialize batch pipeline
+    pipeline = None
+    try:
+        pipeline = BatchEmbeddingPipeline(config)
+        
+        # Load existing jobs
+        pipeline.load_checkpoint(checkpoint_dir)
+        if not pipeline.batch_jobs:
+            pipeline._recover_batch_jobs_from_api()
+        
+        if not pipeline.batch_jobs:
+            print("ℹ️  No batch jobs found")
+            return
+        
+        # Check which jobs failed due to token limit
+        print(f"📡 Checking status of batch jobs...")
+        token_limit_failures = []
+        
+        for job_id, job_info in pipeline.batch_jobs.items():
+            try:
+                batch_status = pipeline.openai_client.batches.retrieve(job_id)
+                if (batch_status.status == 'failed' and 
+                    hasattr(batch_status, 'errors') and 
+                    batch_status.errors):
+                    
+                    # Check if it failed due to token limit
+                    for error in batch_status.errors.data:
+                        if error.code == 'token_limit_exceeded':
+                            token_limit_failures.append(job_id)
+                            break
+                            
+            except Exception as e:
+                print(f"⚠️  Could not check job {job_id}: {e}")
+        
+        if not token_limit_failures:
+            print("ℹ️  No jobs failed due to token limit")
+            return
+        
+        print(f"📊 Found {len(token_limit_failures)} jobs that failed due to token limit")
+        
+        # Check current quota usage
+        active_jobs = 0
+        for job_id, job_info in pipeline.batch_jobs.items():
+            try:
+                batch_status = pipeline.openai_client.batches.retrieve(job_id)
+                if batch_status.status in ['pending', 'validating', 'in_progress', 'finalizing']:
+                    active_jobs += 1
+            except:
+                pass
+        
+        print(f"📊 Currently {active_jobs} jobs active (consuming token quota)")
+        
+        if active_jobs > 10:  # Arbitrary threshold
+            print("⏳ Too many active jobs. Wait for some to complete before resubmitting.")
+            print("   Run this command again in 30-60 minutes.")
+            return
+        
+        # Resubmit a small batch of failed jobs
+        resubmit_count = min(5, len(token_limit_failures))  # Start with just 5
+        jobs_to_resubmit = token_limit_failures[:resubmit_count]
+        
+        print(f"🚀 Attempting to resubmit {resubmit_count} failed jobs...")
+        
+        successful_resubmits = 0
+        for job_id in jobs_to_resubmit:
+            try:
+                # Get the original batch to resubmit
+                original_batch = pipeline.openai_client.batches.retrieve(job_id)
+                
+                # Create new batch with same input file
+                new_batch = pipeline.openai_client.batches.create(
+                    input_file_id=original_batch.input_file_id,
+                    endpoint="/v1/embeddings",
+                    completion_window="24h",
+                    metadata={
+                        "description": f"Resubmitted batch (original: {job_id})",
+                        "created_by": "embedding_and_indexing_batch",
+                        "resubmitted_from": job_id
+                    }
+                )
+                
+                # Track the new job
+                pipeline.batch_jobs[new_batch.id] = {
+                    'batch_idx': len(pipeline.batch_jobs),
+                    'input_file_id': new_batch.input_file_id,
+                    'status': 'submitted',
+                    'created_at': new_batch.created_at,
+                    'resubmitted_from': job_id,
+                    'recovered': False
+                }
+                
+                successful_resubmits += 1
+                print(f"   ✅ Resubmitted {job_id} as {new_batch.id}")
+                
+            except Exception as e:
+                if "token_limit_exceeded" in str(e):
+                    print(f"   ⏳ Still at token limit. Stop here and try again later.")
+                    break
+                else:
+                    print(f"   ❌ Failed to resubmit {job_id}: {e}")
+        
+        # Save updated jobs
+        pipeline.save_checkpoint(checkpoint_dir)
+        
+        print(f"\n📊 Resubmission Summary:")
+        print(f"   Successfully resubmitted: {successful_resubmits}")
+        print(f"   Remaining failed jobs: {len(token_limit_failures) - successful_resubmits}")
+        
+        if successful_resubmits > 0:
+            print(f"\n📋 Next steps:")
+            print(f"   1. Wait 30-60 minutes for jobs to process")
+            print(f"   2. Check status: python batch_manager.py --status")
+            print(f"   3. Resubmit more: python batch_manager.py --resubmit")
+        
+    except Exception as e:
+        print(f"❌ Error resubmitting jobs: {str(e)}")
+        sys.exit(1)
+    finally:
+        if pipeline and hasattr(pipeline, 'weaviate_client'):
+            try:
+                pipeline.weaviate_client.close()
+            except:
+                pass
+
 def investigate_failures(config: Dict[str, Any]) -> None:
     """Investigate failed batch jobs to understand why they failed."""
     print("🔍 Investigating failed batch jobs...")
@@ -197,10 +478,18 @@ def investigate_failures(config: Dict[str, Any]) -> None:
             print("ℹ️  No batch jobs found to investigate")
             return
         
+        # Check a sample of jobs to find failed ones (checking all 439 would take too long)
+        sample_job_ids = list(pipeline.batch_jobs.keys())[:50]  # Check first 50 jobs
+        print(f"📡 Checking current status of {len(sample_job_ids)} sample jobs with OpenAI...")
         failed_jobs = []
-        for job_id, job_info in pipeline.batch_jobs.items():
-            if job_info.get('status') == 'failed':
-                failed_jobs.append(job_id)
+        
+        for job_id in sample_job_ids:
+            try:
+                batch_status = pipeline.openai_client.batches.retrieve(job_id)
+                if batch_status.status == 'failed':
+                    failed_jobs.append((job_id, batch_status))
+            except Exception as e:
+                print(f"⚠️  Could not check status of job {job_id}: {e}")
         
         if not failed_jobs:
             print("ℹ️  No failed jobs found")
@@ -212,11 +501,10 @@ def investigate_failures(config: Dict[str, Any]) -> None:
         sample_size = min(5, len(failed_jobs))
         sample_jobs = failed_jobs[:sample_size]
         
-        for i, job_id in enumerate(sample_jobs):
+        for i, (job_id, batch_status) in enumerate(sample_jobs):
             print(f"\n--- Failed Job {i+1}/{sample_size}: {job_id} ---")
             
             try:
-                batch_status = pipeline.openai_client.batches.retrieve(job_id)
                 
                 print(f"Status: {batch_status.status}")
                 print(f"Created: {batch_status.created_at}")
@@ -381,6 +669,15 @@ Examples:
   # Recover all batch jobs from OpenAI (if checkpoints corrupted)
   python batch_manager.py --recover
   
+  # Investigate failed jobs
+  python batch_manager.py --investigate
+  
+  # Resubmit failed jobs (for token limit issues)
+  python batch_manager.py --resubmit
+  
+  # Cancel all uncompleted jobs (frees token quota)
+  python batch_manager.py --cancel
+  
   # Reset embedding stage (clear all checkpoints)
   python batch_manager.py --reset
   
@@ -409,6 +706,10 @@ Examples:
                              help='Recover all batch jobs from OpenAI API (useful when checkpoints are corrupted)')
     action_group.add_argument('--investigate', action='store_true',
                              help='Investigate failed batch jobs to understand failure reasons')
+    action_group.add_argument('--resubmit', action='store_true',
+                             help='Resubmit failed batch jobs (useful for token limit failures)')
+    action_group.add_argument('--cancel', action='store_true',
+                             help='Cancel all uncompleted batch jobs (frees up token quota)')
     
     parser.add_argument('--verbose', '-v', action='store_true',
                        help='Enable verbose logging')
@@ -425,8 +726,8 @@ Examples:
     # Load configuration
     config = load_config(args.config)
     
-    # For reset, recover, and investigate commands, we don't need batch processing to be enabled
-    if not args.reset and not args.recover and not args.investigate and not config.get('use_batch_embeddings', False):
+    # For reset, recover, investigate, resubmit, and cancel commands, we don't need batch processing to be enabled
+    if not args.reset and not args.recover and not args.investigate and not args.resubmit and not args.cancel and not config.get('use_batch_embeddings', False):
         print("⚠️  Batch embeddings are not enabled in configuration.")
         print("   Set 'use_batch_embeddings: true' in your config.yml")
         sys.exit(1)
@@ -445,6 +746,10 @@ Examples:
             recover_all_jobs(config)
         elif args.investigate:
             investigate_failures(config)
+        elif args.resubmit:
+            resubmit_failed_jobs(config)
+        elif args.cancel:
+            cancel_uncompleted_jobs(config)
             
     except KeyboardInterrupt:
         print("\n🛑 Operation cancelled by user")
