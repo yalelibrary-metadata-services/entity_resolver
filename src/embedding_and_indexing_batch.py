@@ -250,8 +250,10 @@ class BatchEmbeddingPipeline:
         """
         # DEBUG: Log where this is being called from
         import traceback
-        logger.warning(f"🚨 DEBUG: _create_batch_requests_file called for {output_path}")
-        logger.warning(f"🚨 DEBUG: Call stack: {''.join(traceback.format_stack()[-3:-1])}")
+        logger.error(f"🚨 DEBUG: _create_batch_requests_file called for {output_path}")
+        logger.error(f"🚨 DEBUG: Call stack:")
+        for line in traceback.format_stack():
+            logger.error(f"  {line.strip()}")
         
         logger.info(f"Creating batch requests file with {len(strings_to_process)} requests")
         
@@ -857,6 +859,7 @@ class BatchEmbeddingPipeline:
                         metadata.get('created_by') == 'embedding_and_indexing_batch'):
                         
                         # Include ALL statuses - even failed ones so we can track them
+                        logger.warning(f"🚨 DEBUG: Recovering batch {batch.id} with input_file_id: {batch.input_file_id}")
                         self.batch_jobs[batch.id] = {
                             'batch_idx': recovered_jobs,  # Sequential numbering for recovered jobs
                             'input_file_id': batch.input_file_id,
