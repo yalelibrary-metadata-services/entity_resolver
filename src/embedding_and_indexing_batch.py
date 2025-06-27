@@ -1252,10 +1252,18 @@ class BatchEmbeddingPipeline:
                 }
         
         job_statuses = {}
-        pending_count = 0
-        in_progress_count = 0
-        completed_count = 0
-        failed_count = 0
+        # Detailed status counters for maximum granularity
+        status_counts = {
+            BatchJobStatus.PENDING: 0,
+            BatchJobStatus.VALIDATING: 0, 
+            BatchJobStatus.IN_PROGRESS: 0,
+            BatchJobStatus.FINALIZING: 0,
+            BatchJobStatus.COMPLETED: 0,
+            BatchJobStatus.FAILED: 0,
+            BatchJobStatus.EXPIRED: 0,
+            BatchJobStatus.CANCELLED: 0,
+            'error': 0  # For jobs we couldn't check
+        }
         
         logger.info(f"Checking status of {len(self.batch_jobs)} batch jobs...")
         
@@ -1305,15 +1313,12 @@ class BatchEmbeddingPipeline:
                 if hasattr(batch_status, 'output_file_id'):
                     self.batch_jobs[batch_job_id]['output_file_id'] = batch_status.output_file_id
                 
-                # Count statuses
-                if current_status in [BatchJobStatus.PENDING, BatchJobStatus.VALIDATING]:
-                    pending_count += 1
-                elif current_status in [BatchJobStatus.IN_PROGRESS, BatchJobStatus.FINALIZING]:
-                    in_progress_count += 1
-                elif current_status == BatchJobStatus.COMPLETED:
-                    completed_count += 1
+                # Count detailed statuses
+                if current_status in status_counts:
+                    status_counts[current_status] += 1
                 else:
-                    failed_count += 1
+                    # Unknown status - count as failed for backwards compatibility
+                    status_counts[BatchJobStatus.FAILED] += 1
                 
                 batch_display = job_info.get('batch_idx', 'unknown')
                 if isinstance(batch_display, int):
@@ -1339,31 +1344,47 @@ class BatchEmbeddingPipeline:
                     'error': str(e),
                     'recovered': job_info.get('recovered', False)
                 }
-                failed_count += 1
+                status_counts['error'] += 1
         
         # Save updated checkpoint
         self.save_checkpoint(checkpoint_dir)
         
-        # Summary
+        # Detailed Summary
         total_jobs = len(self.batch_jobs)
-        logger.info(f"\n📊 BATCH JOB STATUS SUMMARY:")
-        logger.info(f"   Total jobs: {total_jobs}")
-        logger.info(f"   ⏳ Pending: {pending_count}")
-        logger.info(f"   🔄 In progress: {in_progress_count}")
-        logger.info(f"   ✅ Completed: {completed_count}")
-        logger.info(f"   ❌ Failed: {failed_count}")
+        completed_count = status_counts[BatchJobStatus.COMPLETED]
         
-        # Note: Detailed status breakdown is handled by batch_manager.py
+        logger.info(f"\n📊 DETAILED BATCH JOB STATUS:")
+        logger.info(f"   Total jobs: {total_jobs}")
+        
+        # Show each status with appropriate emoji and only if count > 0
+        status_display = [
+            (BatchJobStatus.PENDING, "⏳ Pending", status_counts[BatchJobStatus.PENDING]),
+            (BatchJobStatus.VALIDATING, "🔍 Validating", status_counts[BatchJobStatus.VALIDATING]), 
+            (BatchJobStatus.IN_PROGRESS, "🔄 In Progress", status_counts[BatchJobStatus.IN_PROGRESS]),
+            (BatchJobStatus.FINALIZING, "🏁 Finalizing", status_counts[BatchJobStatus.FINALIZING]),
+            (BatchJobStatus.COMPLETED, "✅ Completed", status_counts[BatchJobStatus.COMPLETED]),
+            (BatchJobStatus.FAILED, "❌ Failed", status_counts[BatchJobStatus.FAILED]),
+            (BatchJobStatus.EXPIRED, "⏰ Expired", status_counts[BatchJobStatus.EXPIRED]),
+            (BatchJobStatus.CANCELLED, "🚫 Cancelled", status_counts[BatchJobStatus.CANCELLED]),
+            ('error', "⚠️  Error", status_counts['error'])
+        ]
+        
+        for status_key, label, count in status_display:
+            if count > 0:
+                logger.info(f"   {label}: {count}")
         
         return {
             'status': 'checked',
             'total_jobs': total_jobs,
-            'pending': pending_count,
-            'in_progress': in_progress_count,
+            'status_counts': status_counts,  # Detailed breakdown
             'completed': completed_count,
-            'failed': failed_count,
             'job_statuses': job_statuses,
-            'ready_for_download': completed_count > 0
+            'ready_for_download': completed_count > 0,
+            # Backwards compatibility - grouped counts
+            'pending': status_counts[BatchJobStatus.PENDING] + status_counts[BatchJobStatus.VALIDATING],
+            'in_progress': status_counts[BatchJobStatus.IN_PROGRESS] + status_counts[BatchJobStatus.FINALIZING],
+            'failed': status_counts[BatchJobStatus.FAILED] + status_counts[BatchJobStatus.EXPIRED] + 
+                     status_counts[BatchJobStatus.CANCELLED] + status_counts['error']
         }
     
     def process_completed_jobs(self, checkpoint_dir: str) -> Dict[str, Any]:

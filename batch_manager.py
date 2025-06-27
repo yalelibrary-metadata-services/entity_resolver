@@ -124,7 +124,32 @@ def check_status(config: Dict[str, Any]) -> None:
             print("ℹ️  No batch jobs found.")
             print("   Create jobs first: python batch_manager.py --create")
         elif result['status'] == 'checked':
-            # Status already logged by the method
+            # Status already logged by the method - now show additional details
+            
+            # Show granular status breakdown if available
+            if 'status_counts' in result:
+                status_counts = result['status_counts']
+                print(f"\n🔍 GRANULAR STATUS BREAKDOWN:")
+                
+                # Define status display order and emojis
+                status_display = [
+                    ('pending', "⏳ Pending"),
+                    ('validating', "🔍 Validating"), 
+                    ('in_progress', "🔄 In Progress"),
+                    ('finalizing', "🏁 Finalizing"),
+                    ('completed', "✅ Completed"),
+                    ('failed', "❌ Failed"),
+                    ('expired', "⏰ Expired"),
+                    ('cancelled', "🚫 Cancelled"),
+                    ('error', "⚠️  Error")
+                ]
+                
+                # Show each status if count > 0
+                for status_key, label in status_display:
+                    count = status_counts.get(status_key, 0)
+                    if count > 0:
+                        print(f"   {label}: {count}")
+            
             if result['ready_for_download']:
                 print(f"\n🎉 {result['completed']} jobs are ready for download!")
                 print(f"   Run: python batch_manager.py --download")
@@ -137,7 +162,7 @@ def check_status(config: Dict[str, Any]) -> None:
                     downloaded_count = sum(1 for job in completed_jobs if job.get('download_status') == 'downloaded')
                     processed_count = sum(1 for job in completed_jobs if job.get('processing_status') == 'processed')
                     
-                    print(f"\n📊 Detailed Status:")
+                    print(f"\n📊 Download/Processing Status:")
                     print(f"   ✅ Completed: {len(completed_jobs)} jobs")
                     print(f"   📥 Downloaded: {downloaded_count} jobs")
                     print(f"   🗄️  Processed: {processed_count} jobs")
