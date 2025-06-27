@@ -248,13 +248,6 @@ class BatchEmbeddingPipeline:
         Returns:
             Dictionary with file metadata
         """
-        # DEBUG: Log where this is being called from
-        import traceback
-        logger.error(f"🚨 DEBUG: _create_batch_requests_file called for {output_path}")
-        logger.error(f"🚨 DEBUG: Call stack:")
-        for line in traceback.format_stack():
-            logger.error(f"  {line.strip()}")
-        
         logger.info(f"Creating batch requests file with {len(strings_to_process)} requests")
         
         # Create custom ID mapping for tracking
@@ -828,6 +821,76 @@ class BatchEmbeddingPipeline:
         except Exception as e:
             logger.error(f"Error saving checkpoint: {str(e)}")
     
+    def _recover_batch_jobs_from_api_readonly(self) -> None:
+        """
+        Read-only recovery of batch jobs from OpenAI API for status checking.
+        Does not save any files or checkpoints - purely for status display.
+        """
+        logger.info("Attempting to recover batch jobs from OpenAI API (read-only)")
+        
+        try:
+            recovered_jobs = 0
+            after = None
+            total_batches_checked = 0
+            
+            # Paginate through ALL batch jobs to find ours
+            while True:
+                # Get batch of results (up to 100 per request)
+                if after:
+                    batches = self.openai_client.batches.list(limit=100, after=after)
+                else:
+                    batches = self.openai_client.batches.list(limit=100)
+                
+                total_batches_checked += len(batches.data)
+                
+                # Process this page of results
+                for batch in batches.data:
+                    # Look for our batch jobs (filter by metadata or other identifiers)
+                    metadata = getattr(batch, 'metadata', {})
+                    if (metadata and 
+                        metadata.get('created_by') == 'embedding_and_indexing_batch'):
+                        
+                        # Include ALL statuses - even failed ones so we can track them
+                        logger.debug(f"Found batch {batch.id}: {batch.status}")
+                        self.batch_jobs[batch.id] = {
+                            'batch_idx': recovered_jobs,  # Sequential numbering for recovered jobs
+                            'input_file_id': batch.input_file_id,
+                            'status': batch.status,
+                            'created_at': batch.created_at,
+                            'recovered': True,  # Mark as recovered
+                            'original_description': getattr(batch, 'metadata', {}).get('description', ''),
+                            'readonly_recovery': True  # Mark as read-only recovery
+                        }
+                        
+                        if hasattr(batch, 'output_file_id') and batch.output_file_id:
+                            self.batch_jobs[batch.id]['output_file_id'] = batch.output_file_id
+                        
+                        # For read-only recovery, assume no files are downloaded
+                        self.batch_jobs[batch.id]['results_downloaded'] = False
+                        self.batch_jobs[batch.id]['results_processed'] = False
+                        
+                        recovered_jobs += 1
+                
+                # Check if there are more results
+                if not batches.has_more:
+                    break
+                    
+                # Get the last batch ID for pagination
+                if batches.data:
+                    after = batches.data[-1].id
+                else:
+                    break
+            
+            logger.info(f"Scanned {total_batches_checked} total batches from OpenAI API")
+            if recovered_jobs > 0:
+                logger.info(f"Recovered {recovered_jobs} entity resolution batch jobs (read-only)")
+            else:
+                logger.info("No existing entity resolution batch jobs found in OpenAI API")
+                
+        except Exception as e:
+            logger.error(f"Error querying OpenAI API for batch recovery: {str(e)}")
+            raise
+
     def _recover_batch_jobs_from_api(self, checkpoint_dir: str = None) -> None:
         """
         Attempt to recover ALL batch jobs by querying OpenAI API with pagination.
@@ -859,7 +922,7 @@ class BatchEmbeddingPipeline:
                         metadata.get('created_by') == 'embedding_and_indexing_batch'):
                         
                         # Include ALL statuses - even failed ones so we can track them
-                        logger.warning(f"🚨 DEBUG: Recovering batch {batch.id} with input_file_id: {batch.input_file_id}")
+                        logger.debug(f"Recovering batch {batch.id} with input_file_id: {batch.input_file_id}")
                         self.batch_jobs[batch.id] = {
                             'batch_idx': recovered_jobs,  # Sequential numbering for recovered jobs
                             'input_file_id': batch.input_file_id,
@@ -1237,15 +1300,15 @@ class BatchEmbeddingPipeline:
         # Load checkpoint
         self.load_checkpoint(checkpoint_dir)
         
-        # If no batch jobs found locally, try to recover from API
+        # If no batch jobs found locally, try to recover from API (READ-ONLY)
         if not self.batch_jobs:
-            logger.info("No local batch jobs found - attempting to recover from OpenAI API")
+            logger.info("No local batch jobs found - attempting to recover from OpenAI API (read-only)")
             try:
-                self._recover_batch_jobs_from_api(checkpoint_dir)
+                self._recover_batch_jobs_from_api_readonly()
                 if self.batch_jobs:
-                    logger.info(f"Recovered {len(self.batch_jobs)} batch jobs from API")
-                    # Save the recovered jobs
-                    self.save_checkpoint(checkpoint_dir)
+                    logger.info(f"Recovered {len(self.batch_jobs)} batch jobs from API (read-only)")
+                    # DO NOT save checkpoint during status check - keep it read-only
+                    logger.debug("Status check is read-only - not saving checkpoint")
                 else:
                     logger.info("No batch jobs found in OpenAI API either")
                     return {
@@ -1354,8 +1417,8 @@ class BatchEmbeddingPipeline:
                 }
                 status_counts['error'] += 1
         
-        # Save updated checkpoint
-        self.save_checkpoint(checkpoint_dir)
+        # Do NOT save checkpoint during status check - keep it read-only
+        logger.debug("Status check complete - no files were created or modified")
         
         # Detailed Summary
         total_jobs = len(self.batch_jobs)
