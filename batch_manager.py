@@ -98,6 +98,20 @@ def check_status(config: Dict[str, Any]) -> None:
     
     checkpoint_dir = config.get("checkpoint_dir", "data/checkpoints")
     
+    # Debug: List existing files in checkpoint directory
+    print(f"🔍 Debug: Checking checkpoint directory: {checkpoint_dir}")
+    if os.path.exists(checkpoint_dir):
+        import glob
+        jsonl_files = glob.glob(os.path.join(checkpoint_dir, "*.jsonl"))
+        if jsonl_files:
+            print(f"   Found {len(jsonl_files)} JSONL files:")
+            for file in jsonl_files:
+                print(f"     - {os.path.basename(file)}")
+        else:
+            print("   No JSONL files found in checkpoint directory")
+    else:
+        print(f"   Checkpoint directory does not exist: {checkpoint_dir}")
+    
     # Initialize batch pipeline
     pipeline = None
     try:

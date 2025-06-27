@@ -869,6 +869,8 @@ class BatchEmbeddingPipeline:
                             # Check for existing downloaded files if checkpoint_dir is available
                             results_downloaded = False
                             if checkpoint_dir:
+                                logger.debug(f"Checking for downloaded files for job {batch.id[:8]}... in directory: {checkpoint_dir}")
+                                
                                 # Try multiple possible result file names
                                 possible_filenames = [
                                     f'batch_results_{recovered_jobs}.jsonl',  # Current naming scheme
@@ -878,10 +880,14 @@ class BatchEmbeddingPipeline:
                                 
                                 for filename in possible_filenames:
                                     results_file_path = os.path.join(checkpoint_dir, filename)
+                                    logger.debug(f"  Checking for file: {results_file_path}")
                                     if os.path.exists(results_file_path):
-                                        logger.info(f"Found existing results file {filename} for job {batch.id[:8]}... - marking as downloaded")
+                                        logger.info(f"✅ Found existing results file {filename} for job {batch.id[:8]}... - marking as downloaded")
                                         results_downloaded = True
                                         break
+                                
+                                if not results_downloaded:
+                                    logger.debug(f"  No results files found for job {batch.id[:8]}...")
                             
                             # Set download/processing status
                             self.batch_jobs[batch.id]['results_downloaded'] = results_downloaded
