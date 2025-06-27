@@ -644,9 +644,30 @@ class BatchEmbeddingPipeline:
                 with open(batch_jobs_path, 'rb') as f:
                     self.batch_jobs = pickle.load(f)
                 logger.info(f"Loaded {len(self.batch_jobs)} batch jobs from checkpoint")
+                
+                # Extract hashes from existing batch jobs to avoid reprocessing
+                extracted_hashes = 0
+                for job_info in self.batch_jobs.values():
+                    if 'file_metadata' in job_info and 'custom_id_mapping' in job_info['file_metadata']:
+                        for custom_id, item_data in job_info['file_metadata']['custom_id_mapping'].items():
+                            hash_value = item_data['hash_value']
+                            self.processed_hashes.add(hash_value)
+                            extracted_hashes += 1
+                
+                if extracted_hashes > 0:
+                    logger.info(f"Extracted {extracted_hashes} submitted hashes from existing batch jobs")
+                    
             except Exception as e:
                 logger.error(f"Error loading batch jobs: {str(e)}")
+                logger.warning("Batch jobs checkpoint appears corrupted - attempting to recover")
+                
+                # Try to recover by querying OpenAI for existing batch jobs
                 self.batch_jobs = {}
+                try:
+                    self._recover_batch_jobs_from_api()
+                except Exception as recovery_error:
+                    logger.error(f"Failed to recover batch jobs from API: {recovery_error}")
+                    logger.info("Starting with empty batch jobs - existing jobs will be rediscovered on status check")
     
     def save_checkpoint(self, checkpoint_dir: str) -> None:
         """
@@ -673,6 +694,83 @@ class BatchEmbeddingPipeline:
             
         except Exception as e:
             logger.error(f"Error saving checkpoint: {str(e)}")
+    
+    def _recover_batch_jobs_from_api(self) -> None:
+        """
+        Attempt to recover ALL batch jobs by querying OpenAI API with pagination.
+        This helps when checkpoint files are corrupted.
+        """
+        logger.info("Attempting to recover ALL batch jobs from OpenAI API")
+        
+        try:
+            recovered_jobs = 0
+            after = None
+            total_batches_checked = 0
+            
+            # Paginate through ALL batch jobs to find ours
+            while True:
+                # Get batch of results (up to 100 per request)
+                if after:
+                    batches = self.openai_client.batches.list(limit=100, after=after)
+                else:
+                    batches = self.openai_client.batches.list(limit=100)
+                
+                total_batches_checked += len(batches.data)
+                
+                # Process this page of results
+                for batch in batches.data:
+                    # Look for our batch jobs (filter by metadata or other identifiers)
+                    metadata = getattr(batch, 'metadata', {})
+                    if (metadata and 
+                        metadata.get('created_by') == 'embedding_and_indexing_batch'):
+                        
+                        # Include ALL statuses - even failed ones so we can track them
+                        self.batch_jobs[batch.id] = {
+                            'batch_idx': recovered_jobs,  # Sequential numbering for recovered jobs
+                            'input_file_id': batch.input_file_id,
+                            'status': batch.status,
+                            'created_at': batch.created_at,
+                            'recovered': True,  # Mark as recovered
+                            'original_description': getattr(batch, 'metadata', {}).get('description', '')
+                        }
+                        
+                        if hasattr(batch, 'output_file_id') and batch.output_file_id:
+                            self.batch_jobs[batch.id]['output_file_id'] = batch.output_file_id
+                        
+                        recovered_jobs += 1
+                        
+                        logger.debug(f"Recovered batch {batch.id}: {batch.status} (created: {batch.created_at})")
+                
+                # Check if there are more results
+                if not batches.has_more:
+                    break
+                    
+                # Get the last batch ID for pagination
+                if batches.data:
+                    after = batches.data[-1].id
+                else:
+                    break
+            
+            logger.info(f"Scanned {total_batches_checked} total batches from OpenAI API")
+            if recovered_jobs > 0:
+                logger.info(f"Recovered {recovered_jobs} entity resolution batch jobs")
+                
+                # Group by status for summary
+                status_counts = {}
+                for job_info in self.batch_jobs.values():
+                    status = job_info['status']
+                    status_counts[status] = status_counts.get(status, 0) + 1
+                
+                logger.info("Recovered job status summary:")
+                for status, count in status_counts.items():
+                    logger.info(f"  {status}: {count} jobs")
+                    
+            else:
+                logger.info("No existing entity resolution batch jobs found in OpenAI API")
+                
+        except Exception as e:
+            logger.error(f"Error querying OpenAI API for batch recovery: {str(e)}")
+            raise
     
     def create_batch_jobs_only(self, string_dict: Dict[str, str], field_hash_mapping: Dict[str, Dict[str, int]],
                              string_counts: Dict[str, int], checkpoint_dir: str) -> Dict[str, Any]:

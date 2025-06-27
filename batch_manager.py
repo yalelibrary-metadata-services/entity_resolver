@@ -177,6 +177,54 @@ def download_results(config: Dict[str, Any]) -> None:
             except:
                 pass
 
+def recover_all_jobs(config: Dict[str, Any]) -> None:
+    """Recover all batch jobs from OpenAI API."""
+    print("🔄 Recovering all batch jobs from OpenAI API...")
+    
+    checkpoint_dir = config.get("checkpoint_dir", "data/checkpoints")
+    
+    # Initialize batch pipeline
+    pipeline = None
+    try:
+        pipeline = BatchEmbeddingPipeline(config)
+        
+        # Force recovery from API (clear local batch jobs first)
+        pipeline.batch_jobs = {}
+        pipeline._recover_batch_jobs_from_api()
+        
+        # Save the recovered jobs
+        pipeline.save_checkpoint(checkpoint_dir)
+        
+        if pipeline.batch_jobs:
+            print(f"\n🎉 Successfully recovered {len(pipeline.batch_jobs)} batch jobs!")
+            
+            # Group by status for summary
+            status_counts = {}
+            for job_info in pipeline.batch_jobs.values():
+                status = job_info['status']
+                status_counts[status] = status_counts.get(status, 0) + 1
+            
+            print(f"\n📊 Recovered job status summary:")
+            for status, count in status_counts.items():
+                print(f"   {status}: {count} jobs")
+                
+            print(f"\n📋 Next steps:")
+            print(f"   1. Check status: python batch_manager.py --status")
+            print(f"   2. Download completed results: python batch_manager.py --download")
+            print(f"   3. Create new jobs if needed: python batch_manager.py --create")
+        else:
+            print("ℹ️  No entity resolution batch jobs found in OpenAI API")
+            
+    except Exception as e:
+        print(f"❌ Error recovering batch jobs: {str(e)}")
+        sys.exit(1)
+    finally:
+        if pipeline and hasattr(pipeline, 'weaviate_client'):
+            try:
+                pipeline.weaviate_client.close()
+            except:
+                pass
+
 def reset_embedding_stage(config: Dict[str, Any]) -> None:
     """Reset all embedding_and_indexing stage data."""
     print("🗑️  Resetting embedding_and_indexing stage...")
@@ -246,6 +294,9 @@ Examples:
   # Download and process results
   python batch_manager.py --download
   
+  # Recover all batch jobs from OpenAI (if checkpoints corrupted)
+  python batch_manager.py --recover
+  
   # Reset embedding stage (clear all checkpoints)
   python batch_manager.py --reset
   
@@ -270,6 +321,8 @@ Examples:
                              help='Download and process completed batch results')
     action_group.add_argument('--reset', action='store_true',
                              help='Reset embedding_and_indexing stage (clear all checkpoints and files)')
+    action_group.add_argument('--recover', action='store_true',
+                             help='Recover all batch jobs from OpenAI API (useful when checkpoints are corrupted)')
     
     parser.add_argument('--verbose', '-v', action='store_true',
                        help='Enable verbose logging')
@@ -286,8 +339,8 @@ Examples:
     # Load configuration
     config = load_config(args.config)
     
-    # For reset command, we don't need batch processing to be enabled
-    if not args.reset and not config.get('use_batch_embeddings', False):
+    # For reset and recover commands, we don't need batch processing to be enabled
+    if not args.reset and not args.recover and not config.get('use_batch_embeddings', False):
         print("⚠️  Batch embeddings are not enabled in configuration.")
         print("   Set 'use_batch_embeddings: true' in your config.yml")
         sys.exit(1)
@@ -302,6 +355,8 @@ Examples:
             download_results(config)
         elif args.reset:
             reset_embedding_stage(config)
+        elif args.recover:
+            recover_all_jobs(config)
             
     except KeyboardInterrupt:
         print("\n🛑 Operation cancelled by user")
