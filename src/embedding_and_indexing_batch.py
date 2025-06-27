@@ -248,6 +248,11 @@ class BatchEmbeddingPipeline:
         Returns:
             Dictionary with file metadata
         """
+        # DEBUG: Log where this is being called from
+        import traceback
+        logger.warning(f"🚨 DEBUG: _create_batch_requests_file called for {output_path}")
+        logger.warning(f"🚨 DEBUG: Call stack: {''.join(traceback.format_stack()[-3:-1])}")
+        
         logger.info(f"Creating batch requests file with {len(strings_to_process)} requests")
         
         # Create custom ID mapping for tracking
