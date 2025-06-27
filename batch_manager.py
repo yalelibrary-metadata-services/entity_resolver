@@ -177,6 +177,59 @@ def download_results(config: Dict[str, Any]) -> None:
             except:
                 pass
 
+def reset_embedding_stage(config: Dict[str, Any]) -> None:
+    """Reset all embedding_and_indexing stage data."""
+    print("🗑️  Resetting embedding_and_indexing stage...")
+    
+    checkpoint_dir = config.get("checkpoint_dir", "data/checkpoints")
+    
+    files_deleted = []
+    
+    try:
+        # Delete real-time processing checkpoints
+        real_time_files = [
+            os.path.join(checkpoint_dir, 'processed_hashes.pkl')
+        ]
+        
+        # Delete batch processing checkpoints
+        batch_files = [
+            os.path.join(checkpoint_dir, 'batch_processed_hashes.pkl'),
+            os.path.join(checkpoint_dir, 'batch_jobs.pkl')
+        ]
+        
+        # Delete batch request/result files
+        import glob
+        batch_request_pattern = os.path.join(checkpoint_dir, 'batch_requests_*.jsonl')
+        batch_result_pattern = os.path.join(checkpoint_dir, 'batch_results_*.jsonl')
+        
+        batch_files.extend(glob.glob(batch_request_pattern))
+        batch_files.extend(glob.glob(batch_result_pattern))
+        
+        # Combine all files to delete
+        all_files = real_time_files + batch_files
+        
+        # Delete files
+        for file_path in all_files:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                files_deleted.append(os.path.basename(file_path))
+                print(f"   ✅ Deleted: {os.path.basename(file_path)}")
+        
+        if files_deleted:
+            print(f"\n🎉 Successfully deleted {len(files_deleted)} files:")
+            for filename in files_deleted:
+                print(f"   • {filename}")
+        else:
+            print("ℹ️  No files found to delete - stage already clean")
+        
+        print(f"\n📋 Embedding stage reset complete. You can now:")
+        print(f"   • Run embedding with real-time processing")
+        print(f"   • Run embedding with batch processing: python batch_manager.py --create")
+        
+    except Exception as e:
+        print(f"❌ Error resetting embedding stage: {str(e)}")
+        sys.exit(1)
+
 def main():
     """Main function."""
     parser = argparse.ArgumentParser(
@@ -192,6 +245,9 @@ Examples:
   
   # Download and process results
   python batch_manager.py --download
+  
+  # Reset embedding stage (clear all checkpoints)
+  python batch_manager.py --reset
   
   # Full workflow
   python batch_manager.py --create
@@ -212,6 +268,8 @@ Examples:
                              help='Check status of existing batch jobs')
     action_group.add_argument('--download', action='store_true',
                              help='Download and process completed batch results')
+    action_group.add_argument('--reset', action='store_true',
+                             help='Reset embedding_and_indexing stage (clear all checkpoints and files)')
     
     parser.add_argument('--verbose', '-v', action='store_true',
                        help='Enable verbose logging')
@@ -228,8 +286,8 @@ Examples:
     # Load configuration
     config = load_config(args.config)
     
-    # Ensure batch processing is enabled
-    if not config.get('use_batch_embeddings', False):
+    # For reset command, we don't need batch processing to be enabled
+    if not args.reset and not config.get('use_batch_embeddings', False):
         print("⚠️  Batch embeddings are not enabled in configuration.")
         print("   Set 'use_batch_embeddings: true' in your config.yml")
         sys.exit(1)
@@ -242,6 +300,8 @@ Examples:
             check_status(config)
         elif args.download:
             download_results(config)
+        elif args.reset:
+            reset_embedding_stage(config)
             
     except KeyboardInterrupt:
         print("\n🛑 Operation cancelled by user")

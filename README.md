@@ -31,11 +31,19 @@ curl http://localhost:8080/v1/.well-known/ready  # Check readiness
 
 ### Basic Usage
 ```bash
-# Run complete pipeline
+# Run complete pipeline (real-time embeddings)
+python main.py --config config.yml
+
+# Run with batch embeddings (50% cost savings, 24h turnaround)
+# Set use_batch_embeddings: true in config.yml
 python main.py --config config.yml
 
 # Run specific stages
 python main.py --start preprocessing --end training
+
+# Manual batch processing
+python main.py --batch-status     # Check batch job status
+python main.py --batch-results    # Download and process results
 
 # Resume from last checkpoint
 python main.py --resume
@@ -114,17 +122,29 @@ Pre-pipeline data preparation uses XQuery extraction from BIBFRAME catalog data:
 ### 1. Preprocessing (`src/preprocessing.py`)
 - **Purpose**: Clean and deduplicate input data
 - **Key Operations**: 
-  - MD5-based hash deduplication
-  - String frequency analysis
-  - Field mapping and lookup table creation
+  - CRC32-based hash deduplication (3x faster than MD5)
+  - Pure in-memory processing (15,000-18,000 rows/sec)
+  - String frequency analysis and field mapping
+  - Optimized for large datasets (31M+ strings)
 - **Output**: Hash mappings, string dictionaries, field relationships
 
-### 2. Embedding & Indexing (`src/embedding_and_indexing.py`)
-- **Purpose**: Generate vector embeddings and index in vector database
-- **Features**:
-  - OpenAI text-embedding-3-small (1536D) embeddings
-  - Weaviate vector database with HNSW indexing
-  - Batch processing with rate limiting and retry logic
+### 2. Embedding & Indexing 
+**Real-time Processing** (`src/embedding_and_indexing.py`):
+- Immediate OpenAI API processing with rate limiting
+- Direct Weaviate indexing with progress tracking
+- Ideal for development and smaller datasets
+
+**Batch Processing** (`src/embedding_and_indexing_batch.py`):
+- OpenAI Batch API with 50% cost savings
+- Asynchronous processing with 24-hour turnaround
+- Manual polling - no need to keep scripts running
+- Automatic batching (up to 50,000 requests per batch)
+- Ideal for production and large datasets (31M+ strings)
+
+**Common Features**:
+- OpenAI text-embedding-3-small (1536D) embeddings
+- Weaviate vector database with HNSW indexing
+- Comprehensive error handling and retry logic
 - **Output**: Searchable vector index for similarity matching
 
 ### 3. Training (`src/training.py`)
@@ -223,6 +243,11 @@ classification_batch_size: 500
 # OpenAI configuration
 embedding_model: "text-embedding-3-small"
 embedding_dimensions: 1536
+
+# Batch processing (50% cost savings)
+use_batch_embeddings: false        # Set to true for batch processing
+batch_embedding_size: 50000        # Requests per batch file
+batch_manual_polling: true         # Manual polling (recommended)
 
 # Enabled features
 features:
@@ -387,6 +412,8 @@ curl http://localhost:8080/v1/.well-known/ready
 
 ### Additional Resources
 - **[project_structure.md](project_structure.md)**: Detailed project structure and file organization
+- **[BATCH_PROCESSING.md](BATCH_PROCESSING.md)**: Complete batch processing guide with cost analysis
+- **[BATCH_WEAVIATE_INTEGRATION.md](BATCH_WEAVIATE_INTEGRATION.md)**: Technical details of batch-Weaviate integration
 - **[setfit/SETFIT_README.md](setfit/SETFIT_README.md)**: SetFit taxonomy classification system
 - **[CLAUDE.md](CLAUDE.md)**: Project instructions and dataset structure
 - **Performance Reports**: Interactive HTML dashboards in `data/output/reports/`

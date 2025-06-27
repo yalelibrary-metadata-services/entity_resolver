@@ -26,6 +26,7 @@ Input CSV → Preprocessing → Embedding & Indexing → Training → Classifica
 entity_resolver/
 ├── 📁 Core Pipeline Components
 │   ├── main.py                          # CLI entry point with stage control
+│   ├── batch_manager.py                 # Manual batch processing management
 │   ├── config.yml                       # Main pipeline configuration
 │   ├── scaling_config.yml               # Feature scaling configuration
 │   ├── docker-compose.yml               # Weaviate vector database setup
@@ -33,8 +34,9 @@ entity_resolver/
 │
 ├── 📁 src/                              # Core pipeline modules
 │   ├── orchestrating.py                # Pipeline orchestration & stage management
-│   ├── preprocessing.py                # CSV processing & hash-based deduplication
-│   ├── embedding_and_indexing.py       # OpenAI embeddings & Weaviate integration
+│   ├── preprocessing.py                # Optimized CSV processing & CRC32-based deduplication
+│   ├── embedding_and_indexing.py       # Real-time OpenAI embeddings & Weaviate integration
+│   ├── embedding_and_indexing_batch.py # Batch OpenAI API (50% cost savings, 24h turnaround)
 │   ├── feature_engineering.py          # Feature calculation & caching system
 │   ├── training.py                     # Logistic regression classifier training
 │   ├── classifying.py                  # Entity matching & transitive clustering
@@ -79,7 +81,11 @@ entity_resolver/
 │   │   ├── hash_lookup.pkl             # PersonId → field hash mappings
 │   │   ├── string_dict.pkl             # Hash → original string mappings
 │   │   ├── field_hash_mapping.pkl      # Hash → field type relationships
-│   │   ├── processed_hashes.pkl        # Embedding processing checkpoints
+│   │   ├── processed_hashes.pkl        # Real-time embedding processing checkpoints
+│   │   ├── batch_processed_hashes.pkl  # Batch embedding processing checkpoints
+│   │   ├── batch_jobs.pkl              # OpenAI batch job tracking and metadata
+│   │   ├── batch_requests_*.jsonl      # JSONL files uploaded to OpenAI Batch API
+│   │   ├── batch_results_*.jsonl       # JSONL results downloaded from OpenAI
 │   │   └── *.pkl                       # Various stage-specific checkpoints
 │   │
 │   ├── output/                         # Results, Reports & Visualizations
@@ -226,17 +232,33 @@ left,right,match
 
 ### Pipeline Execution
 ```bash
-# Complete pipeline
+# Complete pipeline with real-time embeddings
+python main.py --config config.yml
+
+# Complete pipeline with batch embeddings (50% cost savings)
+# Set use_batch_embeddings: true in config.yml
 python main.py --config config.yml
 
 # Stage-specific execution  
 python main.py --start training --end classification
+
+# Manual batch processing commands
+python main.py --batch-status       # Check batch job status
+python main.py --batch-results      # Download and process results
 
 # Resume from checkpoints
 python main.py --resume
 
 # Reset specific stages
 python main.py --reset training classifying
+```
+
+### Batch Processing Management
+```bash
+# Using dedicated batch manager
+python batch_manager.py --create    # Create batch jobs
+python batch_manager.py --status    # Check job status
+python batch_manager.py --download  # Process results
 ```
 
 ### Individual Record Classification
@@ -259,6 +281,12 @@ python setfit/train_setfit_classifier.py \
 ```
 
 ## Recent Developments
+
+### Embedding Processing Enhancements
+- **Batch API Integration**: OpenAI Batch API support with 50% cost savings and 24-hour turnaround
+- **Manual Polling**: No need to keep scripts running - check status when convenient
+- **Preprocessing Optimization**: CRC32 hashing and pure in-memory processing (15,000-18,000 rows/sec)
+- **Automatic Batching**: Handles large datasets by splitting into 50,000-request batches
 
 ### Individual Record Classification Enhancement
 - **Parallel API Processing**: Optimized for Anthropic rate limits (200K tokens/min)
