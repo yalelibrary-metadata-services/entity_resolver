@@ -177,6 +177,90 @@ def download_results(config: Dict[str, Any]) -> None:
             except:
                 pass
 
+def investigate_failures(config: Dict[str, Any]) -> None:
+    """Investigate failed batch jobs to understand why they failed."""
+    print("🔍 Investigating failed batch jobs...")
+    
+    checkpoint_dir = config.get("checkpoint_dir", "data/checkpoints")
+    
+    # Initialize batch pipeline
+    pipeline = None
+    try:
+        pipeline = BatchEmbeddingPipeline(config)
+        
+        # Load or recover batch jobs
+        pipeline.load_checkpoint(checkpoint_dir)
+        if not pipeline.batch_jobs:
+            pipeline._recover_batch_jobs_from_api()
+        
+        if not pipeline.batch_jobs:
+            print("ℹ️  No batch jobs found to investigate")
+            return
+        
+        failed_jobs = []
+        for job_id, job_info in pipeline.batch_jobs.items():
+            if job_info.get('status') == 'failed':
+                failed_jobs.append(job_id)
+        
+        if not failed_jobs:
+            print("ℹ️  No failed jobs found")
+            return
+        
+        print(f"🔍 Investigating {len(failed_jobs)} failed jobs...")
+        
+        # Sample a few failed jobs to investigate
+        sample_size = min(5, len(failed_jobs))
+        sample_jobs = failed_jobs[:sample_size]
+        
+        for i, job_id in enumerate(sample_jobs):
+            print(f"\n--- Failed Job {i+1}/{sample_size}: {job_id} ---")
+            
+            try:
+                batch_status = pipeline.openai_client.batches.retrieve(job_id)
+                
+                print(f"Status: {batch_status.status}")
+                print(f"Created: {batch_status.created_at}")
+                
+                if hasattr(batch_status, 'request_counts') and batch_status.request_counts:
+                    counts = batch_status.request_counts
+                    print(f"Requests - Total: {getattr(counts, 'total', 0)}, "
+                          f"Completed: {getattr(counts, 'completed', 0)}, "
+                          f"Failed: {getattr(counts, 'failed', 0)}")
+                
+                if hasattr(batch_status, 'errors') and batch_status.errors:
+                    print(f"Errors: {batch_status.errors}")
+                
+                # Try to get error file if available
+                if hasattr(batch_status, 'error_file_id') and batch_status.error_file_id:
+                    print(f"Error file ID: {batch_status.error_file_id}")
+                    try:
+                        error_content = pipeline.openai_client.files.content(batch_status.error_file_id)
+                        error_lines = error_content.content.decode('utf-8').split('\n')[:5]  # First 5 error lines
+                        print("Sample errors:")
+                        for line in error_lines:
+                            if line.strip():
+                                print(f"  {line}")
+                    except Exception as e:
+                        print(f"  Could not retrieve error details: {e}")
+                
+            except Exception as e:
+                print(f"Error investigating job {job_id}: {e}")
+        
+        print(f"\n📊 Summary:")
+        print(f"   Total jobs: {len(pipeline.batch_jobs)}")
+        print(f"   Failed jobs: {len(failed_jobs)}")
+        print(f"   Failure rate: {len(failed_jobs)/len(pipeline.batch_jobs)*100:.1f}%")
+        
+    except Exception as e:
+        print(f"❌ Error investigating failures: {str(e)}")
+        sys.exit(1)
+    finally:
+        if pipeline and hasattr(pipeline, 'weaviate_client'):
+            try:
+                pipeline.weaviate_client.close()
+            except:
+                pass
+
 def recover_all_jobs(config: Dict[str, Any]) -> None:
     """Recover all batch jobs from OpenAI API."""
     print("🔄 Recovering all batch jobs from OpenAI API...")
@@ -323,6 +407,8 @@ Examples:
                              help='Reset embedding_and_indexing stage (clear all checkpoints and files)')
     action_group.add_argument('--recover', action='store_true',
                              help='Recover all batch jobs from OpenAI API (useful when checkpoints are corrupted)')
+    action_group.add_argument('--investigate', action='store_true',
+                             help='Investigate failed batch jobs to understand failure reasons')
     
     parser.add_argument('--verbose', '-v', action='store_true',
                        help='Enable verbose logging')
@@ -339,8 +425,8 @@ Examples:
     # Load configuration
     config = load_config(args.config)
     
-    # For reset and recover commands, we don't need batch processing to be enabled
-    if not args.reset and not args.recover and not config.get('use_batch_embeddings', False):
+    # For reset, recover, and investigate commands, we don't need batch processing to be enabled
+    if not args.reset and not args.recover and not args.investigate and not config.get('use_batch_embeddings', False):
         print("⚠️  Batch embeddings are not enabled in configuration.")
         print("   Set 'use_batch_embeddings: true' in your config.yml")
         sys.exit(1)
@@ -357,6 +443,8 @@ Examples:
             reset_embedding_stage(config)
         elif args.recover:
             recover_all_jobs(config)
+        elif args.investigate:
+            investigate_failures(config)
             
     except KeyboardInterrupt:
         print("\n🛑 Operation cancelled by user")

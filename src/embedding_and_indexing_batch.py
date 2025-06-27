@@ -856,8 +856,8 @@ class BatchEmbeddingPipeline:
         
         logger.info(f"✅ Created {jobs_created} batch jobs in {elapsed_time:.2f} seconds")
         logger.info(f"📋 Jobs will process {len(strings_to_process)} embedding requests")
-        logger.info(f"⏰ Check job status manually using: python main.py --batch-status")
-        logger.info(f"📥 Download results when ready using: python main.py --batch-results")
+        logger.info(f"⏰ Check job status manually using: python batch_manager.py --status")
+        logger.info(f"📥 Download results when ready using: python batch_manager.py --download")
         
         return {
             'status': 'jobs_created',
@@ -953,7 +953,18 @@ class BatchEmbeddingPipeline:
                 batch_display = job_info.get('batch_idx', 'unknown')
                 if isinstance(batch_display, int):
                     batch_display += 1
-                logger.info(f"Job {batch_job_id[:8]}... (batch {batch_display}): {current_status}")
+                
+                # Log failure details for failed jobs
+                if current_status == BatchJobStatus.FAILED:
+                    error_details = ""
+                    if hasattr(batch_status, 'errors') and batch_status.errors:
+                        error_details = f" - Errors: {batch_status.errors}"
+                    elif hasattr(batch_status, 'request_counts'):
+                        counts = batch_status.request_counts
+                        error_details = f" - Requests: {getattr(counts, 'total', 0)} total, {getattr(counts, 'completed', 0)} completed, {getattr(counts, 'failed', 0)} failed"
+                    logger.warning(f"Job {batch_job_id[:8]}... (batch {batch_display}): {current_status}{error_details}")
+                else:
+                    logger.info(f"Job {batch_job_id[:8]}... (batch {batch_display}): {current_status}")
                 
             except Exception as e:
                 logger.error(f"Error checking job {batch_job_id}: {str(e)}")
@@ -979,7 +990,7 @@ class BatchEmbeddingPipeline:
         
         if completed_count > 0:
             logger.info(f"\n💡 {completed_count} jobs ready for processing!")
-            logger.info(f"   Run: python main.py --batch-results")
+            logger.info(f"   Run: python batch_manager.py --download")
         
         return {
             'status': 'checked',
