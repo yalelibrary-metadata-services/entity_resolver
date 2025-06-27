@@ -898,7 +898,139 @@ class BatchEmbeddingPipeline:
             logger.error(f"Error querying OpenAI API for batch recovery: {str(e)}")
             raise
     
-    def _estimate_tokens_for_requests(self, requests: List[Dict[str, Any]]) -> int:\n        \"\"\"\n        Estimate total tokens needed for a list of batch requests.\n        \n        Args:\n            requests: List of embedding requests\n            \n        Returns:\n            Estimated total token count\n        \"\"\"\n        total_tokens = 0\n        \n        for request in requests:\n            # Get the input text from the request\n            if 'body' in request and 'input' in request['body']:\n                text = request['body']['input']\n                # Rough estimation: ~4 characters per token (GPT tokenizer approximation)\n                estimated_tokens = len(text) // 4 + 10  # Add small buffer\n                total_tokens += estimated_tokens\n                \n        return total_tokens\n    \n    def _get_current_token_usage(self) -> Dict[str, int]:\n        \"\"\"\n        Get current token usage from active batch jobs.\n        \n        Returns:\n            Dictionary with current usage statistics\n        \"\"\"\n        logger.info(\"Checking current token usage from active batch jobs...\")\n        \n        active_jobs = 0\n        estimated_active_tokens = 0\n        \n        try:\n            # Get all current batch jobs from OpenAI API\n            after = None\n            while True:\n                if after:\n                    batches = self.openai_client.batches.list(limit=100, after=after)\n                else:\n                    batches = self.openai_client.batches.list(limit=100)\n                \n                for batch in batches.data:\n                    # Check if this is our job and if it's active\n                    metadata = getattr(batch, 'metadata', {})\n                    if (metadata and \n                        metadata.get('created_by') == 'embedding_and_indexing_batch' and\n                        batch.status in ['pending', 'validating', 'in_progress', 'finalizing']):\n                        \n                        active_jobs += 1\n                        \n                        # Estimate tokens for this job\n                        if hasattr(batch, 'request_counts') and batch.request_counts:\n                            # Use actual request count if available\n                            total_requests = getattr(batch.request_counts, 'total', 0)\n                            # Rough estimation: average 100 tokens per embedding request\n                            estimated_active_tokens += total_requests * 100\n                        else:\n                            # Fallback estimation based on our typical batch size\n                            estimated_active_tokens += self.max_requests_per_file * 100\n                \n                if not batches.has_more:\n                    break\n                    \n                if batches.data:\n                    after = batches.data[-1].id\n                else:\n                    break\n            \n            logger.info(f\"Found {active_jobs} active batch jobs using ~{estimated_active_tokens:,} tokens\")\n            \n            return {\n                'active_jobs': active_jobs,\n                'estimated_active_tokens': estimated_active_tokens,\n                'quota_limit': self.token_quota_limit,\n                'available_quota': max(0, self.token_quota_limit - estimated_active_tokens)\n            }\n            \n        except Exception as e:\n            logger.error(f\"Error checking current token usage: {e}\")\n            # Return conservative estimates on error\n            return {\n                'active_jobs': 0,\n                'estimated_active_tokens': 0,\n                'quota_limit': self.token_quota_limit,\n                'available_quota': self.token_quota_limit // 2  # Conservative fallback\n            }\n    \n    def _check_quota_capacity(self, new_requests: List[Dict[str, Any]]) -> Dict[str, Any]:\n        \"\"\"\n        Check if we have enough quota capacity for new batch requests.\n        \n        Args:\n            new_requests: List of new embedding requests to submit\n            \n        Returns:\n            Dictionary with quota check results\n        \"\"\"\n        # Get current usage\n        usage = self._get_current_token_usage()\n        \n        # Estimate tokens needed for new requests\n        estimated_new_tokens = self._estimate_tokens_for_requests(new_requests)\n        \n        # Calculate total usage with new requests\n        total_estimated_tokens = usage['estimated_active_tokens'] + estimated_new_tokens\n        \n        # Apply safety margin\n        safe_quota_limit = int(self.token_quota_limit * (1 - self.quota_safety_margin))\n        \n        # Check if we're within limits\n        within_quota = total_estimated_tokens <= safe_quota_limit\n        within_job_limit = usage['active_jobs'] < self.max_concurrent_jobs\n        \n        result = {\n            'can_submit': within_quota and within_job_limit,\n            'current_usage': usage['estimated_active_tokens'],\n            'new_request_tokens': estimated_new_tokens,\n            'total_estimated_tokens': total_estimated_tokens,\n            'quota_limit': self.token_quota_limit,\n            'safe_quota_limit': safe_quota_limit,\n            'active_jobs': usage['active_jobs'],\n            'max_concurrent_jobs': self.max_concurrent_jobs,\n            'quota_exceeded': not within_quota,\n            'job_limit_exceeded': not within_job_limit\n        }\n        \n        logger.info(f\"Quota check: {estimated_new_tokens:,} new tokens, \"\n                   f\"{usage['estimated_active_tokens']:,} active, \"\n                   f\"{total_estimated_tokens:,}/{safe_quota_limit:,} total (can_submit: {within_quota and within_job_limit})\")\n        \n        return result\n    \n    def create_batch_jobs_only(self, string_dict: Dict[str, str], field_hash_mapping: Dict[str, Dict[str, int]],
+    def _estimate_tokens_for_requests(self, requests: List[Dict[str, Any]]) -> int:
+        """
+        Estimate total tokens needed for a list of batch requests.
+        
+        Args:
+            requests: List of embedding requests
+            
+        Returns:
+            Estimated total token count
+        """
+        total_tokens = 0
+        
+        for request in requests:
+            # Get the input text from the request
+            if 'body' in request and 'input' in request['body']:
+                text = request['body']['input']
+                # Rough estimation: ~4 characters per token (GPT tokenizer approximation)
+                estimated_tokens = len(text) // 4 + 10  # Add small buffer
+                total_tokens += estimated_tokens
+                
+        return total_tokens
+    
+    def _get_current_token_usage(self) -> Dict[str, int]:
+        """
+        Get current token usage from active batch jobs.
+        
+        Returns:
+            Dictionary with current usage statistics
+        """
+        logger.info("Checking current token usage from active batch jobs...")
+        
+        active_jobs = 0
+        estimated_active_tokens = 0
+        
+        try:
+            # Get all current batch jobs from OpenAI API
+            after = None
+            while True:
+                if after:
+                    batches = self.openai_client.batches.list(limit=100, after=after)
+                else:
+                    batches = self.openai_client.batches.list(limit=100)
+                
+                for batch in batches.data:
+                    # Check if this is our job and if it's active
+                    metadata = getattr(batch, 'metadata', {})
+                    if (metadata and 
+                        metadata.get('created_by') == 'embedding_and_indexing_batch' and
+                        batch.status in ['pending', 'validating', 'in_progress', 'finalizing']):
+                        
+                        active_jobs += 1
+                        
+                        # Estimate tokens for this job
+                        if hasattr(batch, 'request_counts') and batch.request_counts:
+                            # Use actual request count if available
+                            total_requests = getattr(batch.request_counts, 'total', 0)
+                            # Rough estimation: average 100 tokens per embedding request
+                            estimated_active_tokens += total_requests * 100
+                        else:
+                            # Fallback estimation based on our typical batch size
+                            estimated_active_tokens += self.max_requests_per_file * 100
+                
+                if not batches.has_more:
+                    break
+                    
+                if batches.data:
+                    after = batches.data[-1].id
+                else:
+                    break
+            
+            logger.info(f"Found {active_jobs} active batch jobs using ~{estimated_active_tokens:,} tokens")
+            
+            return {
+                'active_jobs': active_jobs,
+                'estimated_active_tokens': estimated_active_tokens,
+                'quota_limit': self.token_quota_limit,
+                'available_quota': max(0, self.token_quota_limit - estimated_active_tokens)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error checking current token usage: {e}")
+            # Return conservative estimates on error
+            return {
+                'active_jobs': 0,
+                'estimated_active_tokens': 0,
+                'quota_limit': self.token_quota_limit,
+                'available_quota': self.token_quota_limit // 2  # Conservative fallback
+            }
+    
+    def _check_quota_capacity(self, new_requests: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Check if we have enough quota capacity for new batch requests.
+        
+        Args:
+            new_requests: List of new embedding requests to submit
+            
+        Returns:
+            Dictionary with quota check results
+        """
+        # Get current usage
+        usage = self._get_current_token_usage()
+        
+        # Estimate tokens needed for new requests
+        estimated_new_tokens = self._estimate_tokens_for_requests(new_requests)
+        
+        # Calculate total usage with new requests
+        total_estimated_tokens = usage['estimated_active_tokens'] + estimated_new_tokens
+        
+        # Apply safety margin
+        safe_quota_limit = int(self.token_quota_limit * (1 - self.quota_safety_margin))
+        
+        # Check if we're within limits
+        within_quota = total_estimated_tokens <= safe_quota_limit
+        within_job_limit = usage['active_jobs'] < self.max_concurrent_jobs
+        
+        result = {
+            'can_submit': within_quota and within_job_limit,
+            'current_usage': usage['estimated_active_tokens'],
+            'new_request_tokens': estimated_new_tokens,
+            'total_estimated_tokens': total_estimated_tokens,
+            'quota_limit': self.token_quota_limit,
+            'safe_quota_limit': safe_quota_limit,
+            'active_jobs': usage['active_jobs'],
+            'max_concurrent_jobs': self.max_concurrent_jobs,
+            'quota_exceeded': not within_quota,
+            'job_limit_exceeded': not within_job_limit
+        }
+        
+        logger.info(f"Quota check: {estimated_new_tokens:,} new tokens, "
+                   f"{usage['estimated_active_tokens']:,} active, "
+                   f"{total_estimated_tokens:,}/{safe_quota_limit:,} total (can_submit: {within_quota and within_job_limit})")
+        
+        return result\n    \n    def create_batch_jobs_only(self, string_dict: Dict[str, str], field_hash_mapping: Dict[str, Dict[str, int]],
                              string_counts: Dict[str, int], checkpoint_dir: str) -> Dict[str, Any]:
         """
         Create batch jobs without waiting for completion (manual polling mode).
