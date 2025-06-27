@@ -114,6 +114,27 @@ def check_status(config: Dict[str, Any]) -> None:
             if result['ready_for_download']:
                 print(f"\n🎉 {result['completed']} jobs are ready for download!")
                 print(f"   Run: python batch_manager.py --download")
+                
+                # Show detailed download/processing status for completed jobs
+                job_statuses = result.get('job_statuses', {})
+                completed_jobs = [job for job in job_statuses.values() if job['status'] == 'completed']
+                
+                if completed_jobs:
+                    downloaded_count = sum(1 for job in completed_jobs if job.get('download_status') == 'downloaded')
+                    processed_count = sum(1 for job in completed_jobs if job.get('processing_status') == 'processed')
+                    
+                    print(f"\n📊 Detailed Status:")
+                    print(f"   ✅ Completed: {len(completed_jobs)} jobs")
+                    print(f"   📥 Downloaded: {downloaded_count} jobs")
+                    print(f"   🗄️  Processed: {processed_count} jobs")
+                    
+                    if downloaded_count < len(completed_jobs):
+                        print(f"   💡 {len(completed_jobs) - downloaded_count} jobs ready for download")
+                    elif processed_count < downloaded_count:
+                        print(f"   💡 {downloaded_count - processed_count} jobs ready for processing")
+                    else:
+                        print(f"   ✨ All completed jobs have been processed!")
+                        
             elif result['pending'] > 0 or result['in_progress'] > 0:
                 print(f"\n⏳ Jobs are still processing. Check again later.")
             else:

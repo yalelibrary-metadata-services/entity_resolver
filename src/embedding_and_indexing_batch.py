@@ -72,6 +72,11 @@ class BatchEmbeddingPipeline:
         self.poll_interval = config.get("batch_poll_interval", 300)  # 5 minutes (only used in auto mode)
         self.max_wait_time = config.get("batch_max_wait_time", 86400)  # 24 hours
         
+        # Token quota management
+        self.token_quota_limit = config.get("token_quota_limit", 500_000_000)  # 500M default OpenAI limit
+        self.quota_safety_margin = config.get("quota_safety_margin", 0.1)  # 10% safety margin
+        self.max_concurrent_jobs = config.get("max_concurrent_jobs", 50)  # Limit concurrent jobs
+        
         # Embedding fields configuration
         self.embed_fields = config.get("embed_fields", ["composite", "person", "title"])
         self.skip_fields = config.get("skip_fields", ["provision", "subjects", "personId"])
@@ -893,7 +898,7 @@ class BatchEmbeddingPipeline:
             logger.error(f"Error querying OpenAI API for batch recovery: {str(e)}")
             raise
     
-    def create_batch_jobs_only(self, string_dict: Dict[str, str], field_hash_mapping: Dict[str, Dict[str, int]],
+    def _estimate_tokens_for_requests(self, requests: List[Dict[str, Any]]) -> int:\n        \"\"\"\n        Estimate total tokens needed for a list of batch requests.\n        \n        Args:\n            requests: List of embedding requests\n            \n        Returns:\n            Estimated total token count\n        \"\"\"\n        total_tokens = 0\n        \n        for request in requests:\n            # Get the input text from the request\n            if 'body' in request and 'input' in request['body']:\n                text = request['body']['input']\n                # Rough estimation: ~4 characters per token (GPT tokenizer approximation)\n                estimated_tokens = len(text) // 4 + 10  # Add small buffer\n                total_tokens += estimated_tokens\n                \n        return total_tokens\n    \n    def _get_current_token_usage(self) -> Dict[str, int]:\n        \"\"\"\n        Get current token usage from active batch jobs.\n        \n        Returns:\n            Dictionary with current usage statistics\n        \"\"\"\n        logger.info(\"Checking current token usage from active batch jobs...\")\n        \n        active_jobs = 0\n        estimated_active_tokens = 0\n        \n        try:\n            # Get all current batch jobs from OpenAI API\n            after = None\n            while True:\n                if after:\n                    batches = self.openai_client.batches.list(limit=100, after=after)\n                else:\n                    batches = self.openai_client.batches.list(limit=100)\n                \n                for batch in batches.data:\n                    # Check if this is our job and if it's active\n                    metadata = getattr(batch, 'metadata', {})\n                    if (metadata and \n                        metadata.get('created_by') == 'embedding_and_indexing_batch' and\n                        batch.status in ['pending', 'validating', 'in_progress', 'finalizing']):\n                        \n                        active_jobs += 1\n                        \n                        # Estimate tokens for this job\n                        if hasattr(batch, 'request_counts') and batch.request_counts:\n                            # Use actual request count if available\n                            total_requests = getattr(batch.request_counts, 'total', 0)\n                            # Rough estimation: average 100 tokens per embedding request\n                            estimated_active_tokens += total_requests * 100\n                        else:\n                            # Fallback estimation based on our typical batch size\n                            estimated_active_tokens += self.max_requests_per_file * 100\n                \n                if not batches.has_more:\n                    break\n                    \n                if batches.data:\n                    after = batches.data[-1].id\n                else:\n                    break\n            \n            logger.info(f\"Found {active_jobs} active batch jobs using ~{estimated_active_tokens:,} tokens\")\n            \n            return {\n                'active_jobs': active_jobs,\n                'estimated_active_tokens': estimated_active_tokens,\n                'quota_limit': self.token_quota_limit,\n                'available_quota': max(0, self.token_quota_limit - estimated_active_tokens)\n            }\n            \n        except Exception as e:\n            logger.error(f\"Error checking current token usage: {e}\")\n            # Return conservative estimates on error\n            return {\n                'active_jobs': 0,\n                'estimated_active_tokens': 0,\n                'quota_limit': self.token_quota_limit,\n                'available_quota': self.token_quota_limit // 2  # Conservative fallback\n            }\n    \n    def _check_quota_capacity(self, new_requests: List[Dict[str, Any]]) -> Dict[str, Any]:\n        \"\"\"\n        Check if we have enough quota capacity for new batch requests.\n        \n        Args:\n            new_requests: List of new embedding requests to submit\n            \n        Returns:\n            Dictionary with quota check results\n        \"\"\"\n        # Get current usage\n        usage = self._get_current_token_usage()\n        \n        # Estimate tokens needed for new requests\n        estimated_new_tokens = self._estimate_tokens_for_requests(new_requests)\n        \n        # Calculate total usage with new requests\n        total_estimated_tokens = usage['estimated_active_tokens'] + estimated_new_tokens\n        \n        # Apply safety margin\n        safe_quota_limit = int(self.token_quota_limit * (1 - self.quota_safety_margin))\n        \n        # Check if we're within limits\n        within_quota = total_estimated_tokens <= safe_quota_limit\n        within_job_limit = usage['active_jobs'] < self.max_concurrent_jobs\n        \n        result = {\n            'can_submit': within_quota and within_job_limit,\n            'current_usage': usage['estimated_active_tokens'],\n            'new_request_tokens': estimated_new_tokens,\n            'total_estimated_tokens': total_estimated_tokens,\n            'quota_limit': self.token_quota_limit,\n            'safe_quota_limit': safe_quota_limit,\n            'active_jobs': usage['active_jobs'],\n            'max_concurrent_jobs': self.max_concurrent_jobs,\n            'quota_exceeded': not within_quota,\n            'job_limit_exceeded': not within_job_limit\n        }\n        \n        logger.info(f\"Quota check: {estimated_new_tokens:,} new tokens, \"\n                   f\"{usage['estimated_active_tokens']:,} active, \"\n                   f\"{total_estimated_tokens:,}/{safe_quota_limit:,} total (can_submit: {within_quota and within_job_limit})\")\n        \n        return result\n    \n    def create_batch_jobs_only(self, string_dict: Dict[str, str], field_hash_mapping: Dict[str, Dict[str, int]],
                              string_counts: Dict[str, int], checkpoint_dir: str) -> Dict[str, Any]:
         """
         Create batch jobs without waiting for completion (manual polling mode).
@@ -948,6 +953,57 @@ class BatchEmbeddingPipeline:
                 # Upload file
                 input_file_id = self._upload_batch_file(batch_file_path)
                 
+                # Create batch job
+                # Check quota capacity before creating batch job
+                batch_requests = []
+                with open(batch_file_path, 'r') as f:
+                    for line in f:
+                        if line.strip():
+                            import json
+                            batch_requests.append(json.loads(line))
+                
+                quota_check = self._check_quota_capacity(batch_requests)
+                
+                if not quota_check['can_submit']:
+                    logger.warning(f"🛑 Quota check failed for batch {batch_idx + 1}:")
+                    logger.warning(f"  Current usage: {quota_check['current_usage']:,} tokens")
+                    logger.warning(f"  New request tokens: {quota_check['new_request_tokens']:,}")
+                    logger.warning(f"  Total would be: {quota_check['total_estimated_tokens']:,}/{quota_check['safe_quota_limit']:,}")
+                    logger.warning(f"  Active jobs: {quota_check['active_jobs']}/{quota_check['max_concurrent_jobs']}")
+                    
+                    if quota_check['quota_exceeded']:
+                        logger.warning(f"  ⚠️  Token quota would be exceeded")
+                    if quota_check['job_limit_exceeded']:
+                        logger.warning(f"  ⚠️  Concurrent job limit would be exceeded")
+                    
+                    logger.info(f"💡 Pausing batch creation after {jobs_created} jobs to respect quota limits")
+                    logger.info(f"📊 Progress: {batch_idx}/{len(batches)} batches processed")
+                    logger.info(f"💡 Wait for active jobs to complete, then run again to continue")
+                    
+                    # Clean up uploaded file since we won't use it
+                    try:
+                        self.openai_client.files.delete(input_file_id)
+                        logger.debug(f"Cleaned up unused uploaded file {input_file_id}")
+                    except Exception as cleanup_error:
+                        logger.debug(f"Could not clean up file {input_file_id}: {cleanup_error}")
+                    
+                    # Return current progress
+                    elapsed_time = time.time() - start_time
+                    return {
+                        'status': 'quota_paused',
+                        'jobs_created': jobs_created,
+                        'batches_processed': batch_idx,
+                        'total_batches': len(batches),
+                        'total_requests': sum(len(b) for b in batches[:batch_idx]),
+                        'remaining_requests': sum(len(b) for b in batches[batch_idx:]),
+                        'estimated_cost_savings': sum(len(b) for b in batches[:batch_idx]) * 0.00001 * 0.5,
+                        'elapsed_time': elapsed_time,
+                        'quota_info': quota_check,
+                        'message': f'Created {jobs_created} batch jobs then paused due to quota limits. Wait for jobs to complete, then re-run to continue.'
+                    }
+                
+                # Quota check passed - create batch job
+                logger.info(f"✅ Quota check passed - creating batch job {batch_idx + 1}")
                 # Create batch job
                 batch_job_id = self._create_batch_job(
                     input_file_id, 
@@ -1047,9 +1103,28 @@ class BatchEmbeddingPipeline:
                     # For recovered jobs, try to get request count from OpenAI batch status
                     request_count = getattr(batch_status.request_counts, 'total', None)
                 
+                # Enhanced status tracking with download/processing states
+                download_status = 'not_applicable'
+                processing_status = 'not_applicable'
+                
+                if current_status == BatchJobStatus.COMPLETED:
+                    # Check if results have been downloaded
+                    if job_info.get('results_downloaded', False):
+                        download_status = 'downloaded'
+                        # Check if results have been processed/indexed
+                        if job_info.get('results_processed', False):
+                            processing_status = 'processed'
+                        else:
+                            processing_status = 'pending_processing'
+                    else:
+                        download_status = 'pending_download'
+                        processing_status = 'pending_download'
+                
                 job_statuses[batch_job_id] = {
                     'batch_idx': job_info['batch_idx'],
                     'status': current_status,
+                    'download_status': download_status,
+                    'processing_status': processing_status,
                     'created_at': job_info['created_at'],
                     'request_count': request_count,
                     'output_file_id': getattr(batch_status, 'output_file_id', None),
@@ -1184,6 +1259,8 @@ class BatchEmbeddingPipeline:
                 results_file_path = os.path.join(checkpoint_dir, f'batch_results_{job_info["batch_idx"]}.jsonl')
                 self._download_batch_results(batch_status.output_file_id, results_file_path)
                 
+                # Mark results as downloaded
+                self.batch_jobs[batch_job_id]['results_downloaded'] = True                
                 # Process results - handle recovered jobs without file_metadata
                 if 'file_metadata' in job_info and 'custom_id_mapping' in job_info['file_metadata']:
                     # Original job with full metadata
