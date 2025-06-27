@@ -883,12 +883,27 @@ class BatchEmbeddingPipeline:
         # Load checkpoint
         self.load_checkpoint(checkpoint_dir)
         
+        # If no batch jobs found locally, try to recover from API
         if not self.batch_jobs:
-            logger.info("No batch jobs found")
-            return {
-                'status': 'no_jobs',
-                'message': 'No batch jobs found. Create jobs first with embedding_and_indexing stage.'
-            }
+            logger.info("No local batch jobs found - attempting to recover from OpenAI API")
+            try:
+                self._recover_batch_jobs_from_api()
+                if self.batch_jobs:
+                    logger.info(f"Recovered {len(self.batch_jobs)} batch jobs from API")
+                    # Save the recovered jobs
+                    self.save_checkpoint(checkpoint_dir)
+                else:
+                    logger.info("No batch jobs found in OpenAI API either")
+                    return {
+                        'status': 'no_jobs',
+                        'message': 'No batch jobs found locally or in OpenAI API.'
+                    }
+            except Exception as e:
+                logger.error(f"Failed to recover batch jobs from API: {str(e)}")
+                return {
+                    'status': 'no_jobs',
+                    'message': 'No batch jobs found. Create jobs first with embedding_and_indexing stage.'
+                }
         
         job_statuses = {}
         pending_count = 0
