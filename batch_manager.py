@@ -363,7 +363,7 @@ def resubmit_failed_jobs(config: Dict[str, Any]) -> None:
         # Load existing jobs
         pipeline.load_checkpoint(checkpoint_dir)
         if not pipeline.batch_jobs:
-            pipeline._recover_batch_jobs_from_api()
+            pipeline._recover_batch_jobs_from_api(checkpoint_dir)
         
         if not pipeline.batch_jobs:
             print("ℹ️  No batch jobs found")
@@ -493,7 +493,7 @@ def investigate_failures(config: Dict[str, Any]) -> None:
         # Load or recover batch jobs
         pipeline.load_checkpoint(checkpoint_dir)
         if not pipeline.batch_jobs:
-            pipeline._recover_batch_jobs_from_api()
+            pipeline._recover_batch_jobs_from_api(checkpoint_dir)
         
         if not pipeline.batch_jobs:
             print("ℹ️  No batch jobs found to investigate")
@@ -583,7 +583,7 @@ def recover_all_jobs(config: Dict[str, Any]) -> None:
         
         # Force recovery from API (clear local batch jobs first)
         pipeline.batch_jobs = {}
-        pipeline._recover_batch_jobs_from_api()
+        pipeline._recover_batch_jobs_from_api(checkpoint_dir)
         
         # Save the recovered jobs
         pipeline.save_checkpoint(checkpoint_dir)

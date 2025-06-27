@@ -790,7 +790,7 @@ class BatchEmbeddingPipeline:
                 # Try to recover by querying OpenAI for existing batch jobs
                 self.batch_jobs = {}
                 try:
-                    self._recover_batch_jobs_from_api()
+                    self._recover_batch_jobs_from_api(checkpoint_dir)
                 except Exception as recovery_error:
                     logger.error(f"Failed to recover batch jobs from API: {recovery_error}")
                     logger.info("Starting with empty batch jobs - existing jobs will be rediscovered on status check")
@@ -821,10 +821,11 @@ class BatchEmbeddingPipeline:
         except Exception as e:
             logger.error(f"Error saving checkpoint: {str(e)}")
     
-    def _recover_batch_jobs_from_api(self) -> None:
+    def _recover_batch_jobs_from_api(self, checkpoint_dir: str = None) -> None:
         """
         Attempt to recover ALL batch jobs by querying OpenAI API with pagination.
         This helps when checkpoint files are corrupted.
+        Also checks for existing downloaded files to update status accordingly.
         """
         logger.info("Attempting to recover ALL batch jobs from OpenAI API")
         
@@ -863,6 +864,33 @@ class BatchEmbeddingPipeline:
                         if hasattr(batch, 'output_file_id') and batch.output_file_id:
                             self.batch_jobs[batch.id]['output_file_id'] = batch.output_file_id
                         
+                        # Initialize download/processing status for all jobs
+                        if batch.status == 'completed':
+                            # Check for existing downloaded files if checkpoint_dir is available
+                            results_downloaded = False
+                            if checkpoint_dir:
+                                # Try multiple possible result file names
+                                possible_filenames = [
+                                    f'batch_results_{recovered_jobs}.jsonl',  # Current naming scheme
+                                    f'batch_results_{batch.id}.jsonl',       # Job ID based naming
+                                    f'batch_results_{batch.id[:8]}.jsonl'    # Short job ID naming
+                                ]
+                                
+                                for filename in possible_filenames:
+                                    results_file_path = os.path.join(checkpoint_dir, filename)
+                                    if os.path.exists(results_file_path):
+                                        logger.info(f"Found existing results file {filename} for job {batch.id[:8]}... - marking as downloaded")
+                                        results_downloaded = True
+                                        break
+                            
+                            # Set download/processing status
+                            self.batch_jobs[batch.id]['results_downloaded'] = results_downloaded
+                            self.batch_jobs[batch.id]['results_processed'] = False  # Conservative: assume not processed until confirmed
+                        else:
+                            # For non-completed jobs, these flags don't apply
+                            self.batch_jobs[batch.id]['results_downloaded'] = False
+                            self.batch_jobs[batch.id]['results_processed'] = False
+                        
                         recovered_jobs += 1
                         
                         logger.debug(f"Recovered batch {batch.id}: {batch.status} (created: {batch.created_at})")
@@ -883,13 +911,19 @@ class BatchEmbeddingPipeline:
                 
                 # Group by status for summary
                 status_counts = {}
+                downloaded_count = 0
                 for job_info in self.batch_jobs.values():
                     status = job_info['status']
                     status_counts[status] = status_counts.get(status, 0) + 1
+                    if job_info.get('results_downloaded', False):
+                        downloaded_count += 1
                 
                 logger.info("Recovered job status summary:")
                 for status, count in status_counts.items():
                     logger.info(f"  {status}: {count} jobs")
+                
+                if downloaded_count > 0:
+                    logger.info(f"Found {downloaded_count} jobs with existing downloaded results")
                     
             else:
                 logger.info("No existing entity resolution batch jobs found in OpenAI API")
@@ -1198,7 +1232,7 @@ class BatchEmbeddingPipeline:
         if not self.batch_jobs:
             logger.info("No local batch jobs found - attempting to recover from OpenAI API")
             try:
-                self._recover_batch_jobs_from_api()
+                self._recover_batch_jobs_from_api(checkpoint_dir)
                 if self.batch_jobs:
                     logger.info(f"Recovered {len(self.batch_jobs)} batch jobs from API")
                     # Save the recovered jobs
@@ -1318,9 +1352,7 @@ class BatchEmbeddingPipeline:
         logger.info(f"   ✅ Completed: {completed_count}")
         logger.info(f"   ❌ Failed: {failed_count}")
         
-        if completed_count > 0:
-            logger.info(f"\n💡 {completed_count} jobs ready for processing!")
-            logger.info(f"   Run: python batch_manager.py --download")
+        # Note: Detailed status breakdown is handled by batch_manager.py
         
         return {
             'status': 'checked',
