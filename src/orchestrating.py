@@ -18,6 +18,7 @@ from typing import Dict, List, Tuple, Any, Optional
 # Local imports
 from src.preprocessing import process_data, load_hash_lookup, load_string_dict
 from src.embedding_and_indexing import embedding_and_indexing
+from src.embedding_and_indexing_batch import embedding_and_indexing_batch
 # Keep old imports for backward compatibility but mark as deprecated
 import warnings
 with warnings.catch_warnings():
@@ -301,19 +302,43 @@ class PipelineOrchestrator:
         elif stage_name == 'embedding_and_indexing':
             # Delete checkpoint and reset Weaviate collection
             checkpoint_dir = self.config.get('checkpoint_dir', 'data/checkpoints')
-            processed_hashes_path = os.path.join(checkpoint_dir, 'processed_hashes.pkl')
             
+            # Delete real-time processing checkpoints
+            processed_hashes_path = os.path.join(checkpoint_dir, 'processed_hashes.pkl')
             if os.path.exists(processed_hashes_path):
                 os.remove(processed_hashes_path)
-                logger.info(f"Deleted processed hashes checkpoint: {processed_hashes_path}")
+                logger.info(f"Deleted real-time processed hashes checkpoint: {processed_hashes_path}")
+            
+            # Delete batch processing checkpoints
+            batch_processed_hashes_path = os.path.join(checkpoint_dir, 'batch_processed_hashes.pkl')
+            batch_jobs_path = os.path.join(checkpoint_dir, 'batch_jobs.pkl')
+            
+            if os.path.exists(batch_processed_hashes_path):
+                os.remove(batch_processed_hashes_path)
+                logger.info(f"Deleted batch processed hashes checkpoint: {batch_processed_hashes_path}")
+            
+            if os.path.exists(batch_jobs_path):
+                os.remove(batch_jobs_path)
+                logger.info(f"Deleted batch jobs checkpoint: {batch_jobs_path}")
+            
+            # Delete any batch request/result files
+            import glob
+            batch_request_pattern = os.path.join(checkpoint_dir, 'batch_requests_*.jsonl')
+            batch_result_pattern = os.path.join(checkpoint_dir, 'batch_results_*.jsonl')
+            
+            for pattern in [batch_request_pattern, batch_result_pattern]:
+                batch_files = glob.glob(pattern)
+                for file_path in batch_files:
+                    os.remove(file_path)
+                    logger.info(f"Deleted batch file: {file_path}")
             
             # Set the recreate_collections flag to ensure the collection is recreated
-            # This flag will be checked in embedding_and_indexing.py
+            # This flag will be checked in both embedding modules
             self.config["recreate_collections"] = True
             logger.info("Set recreate_collections flag to True")
             
-            # We'll let the embedding_and_indexing module handle the collection deletion and recreation
-            # since it has more complete error handling for this process
+            # We'll let the embedding modules handle the collection deletion and recreation
+            # since they have more complete error handling for this process
             
         elif stage_name == 'embedding':
             # Legacy stage - redirect to embedding_and_indexing
@@ -437,14 +462,25 @@ class PipelineOrchestrator:
                 logger.error(f"Error loading string counts: {str(e)}")
                 string_counts = {}
         
-        # Run unified embedding and indexing process
-        logger.info("Starting unified embedding and indexing process")
-        metrics = embedding_and_indexing(
-            self.config, 
-            self.string_dict, 
-            field_hash_mapping, 
-            string_counts
-        )
+        # Check if batch processing is enabled
+        use_batch = self.config.get("use_batch_embeddings", False)
+        
+        if use_batch:
+            logger.info("Starting batch embedding and indexing process (50% cost savings, 24h turnaround)")
+            metrics = embedding_and_indexing_batch(
+                self.config, 
+                self.string_dict, 
+                field_hash_mapping, 
+                string_counts
+            )
+        else:
+            logger.info("Starting real-time embedding and indexing process")
+            metrics = embedding_and_indexing(
+                self.config, 
+                self.string_dict, 
+                field_hash_mapping, 
+                string_counts
+            )
         
         return metrics
     
@@ -618,9 +654,61 @@ def main():
     parser.add_argument('--start', help='Stage to start from')
     parser.add_argument('--end', help='Stage to end at')
     parser.add_argument('--reset', nargs='*', help='Stages to reset')
+    
+    # Batch management arguments
+    batch_group = parser.add_argument_group('batch management', 'Manual batch processing commands')
+    batch_group.add_argument('--batch-status', action='store_true',
+                            help='Check status of batch jobs (requires batch processing enabled)')
+    batch_group.add_argument('--batch-results', action='store_true', 
+                            help='Download and process completed batch results')
+    
     args = parser.parse_args()
     
-    # Create and run orchestrator
+    # Handle batch management commands
+    if args.batch_status or args.batch_results:
+        from src.embedding_and_indexing_batch import BatchEmbeddingPipeline
+        import yaml
+        
+        # Load configuration
+        with open(args.config, 'r') as f:
+            config = yaml.safe_load(f)
+        
+        # Check if batch processing is enabled
+        if not config.get('use_batch_embeddings', False):
+            print("⚠️  Batch embeddings are not enabled in configuration.")
+            print("   Set 'use_batch_embeddings: true' in your config.yml")
+            return
+        
+        checkpoint_dir = config.get("checkpoint_dir", "data/checkpoints")
+        
+        # Initialize batch pipeline
+        pipeline = None
+        try:
+            pipeline = BatchEmbeddingPipeline(config)
+            
+            if args.batch_status:
+                result = pipeline.check_batch_status(checkpoint_dir)
+                if result.get('ready_for_download', False):
+                    print(f"\n💡 Ready to download results!")
+                    print(f"   Run: python main.py --batch-results")
+                    
+            elif args.batch_results:
+                result = pipeline.process_completed_jobs(checkpoint_dir)
+                if result['status'] == 'completed':
+                    print(f"\n🎉 Successfully processed batch results!")
+                
+        except Exception as e:
+            logger.error(f"Error in batch management: {str(e)}")
+            raise
+        finally:
+            if pipeline and hasattr(pipeline, 'weaviate_client'):
+                try:
+                    pipeline.weaviate_client.close()
+                except:
+                    pass
+        return
+    
+    # Create and run orchestrator for normal pipeline operations
     orchestrator = PipelineOrchestrator(args.config)
     orchestrator.run_pipeline(args.start, args.end, args.reset)
 

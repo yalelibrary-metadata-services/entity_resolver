@@ -50,6 +50,14 @@ embedding_dimensions: 1536
 max_tokens_per_minute: 5000000
 max_requests_per_minute: 10000
 
+# Batch Processing Configuration
+use_batch_embeddings: true  # Set to true to use OpenAI Batch API (50% cost savings, 24h turnaround)
+batch_embedding_size: 50000  # Number of requests per batch file (max 50,000)
+max_requests_per_file: 50000  # Maximum requests per JSONL file
+batch_manual_polling: true  # Set to true for manual polling, false for automatic polling
+batch_poll_interval: 300  # Seconds between status polls when auto-polling (5 minutes)
+batch_max_wait_time: 86400  # Maximum wait time for batch completion (24 hours)
+
 # Weaviate Configuration
 weaviate_url: "http://localhost:8080"
 weaviate_timeout: 300      # Increased timeout (seconds)
