@@ -13,12 +13,94 @@ import logging
 import argparse
 import yaml
 import pickle
+import fcntl
+import time
 from typing import Dict, Any
 
 # Add src directory to path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
 from src.embedding_and_indexing_batch import BatchEmbeddingPipeline
+
+class ProcessLock:
+    """Simple file-based process lock to prevent multiple instances."""
+    
+    def __init__(self, lock_file: str):
+        self.lock_file = lock_file
+        self.lock_fd = None
+    
+    def __enter__(self):
+        """Acquire the lock."""
+        try:
+            # Create lock directory if it doesn't exist
+            os.makedirs(os.path.dirname(self.lock_file), exist_ok=True)
+            
+            # Open lock file
+            self.lock_fd = open(self.lock_file, 'w')
+            
+            # Try to acquire exclusive lock (non-blocking)
+            fcntl.flock(self.lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            
+            # Write our process ID to the lock file
+            self.lock_fd.write(f"{os.getpid()}\n{time.time()}\n")
+            self.lock_fd.flush()
+            os.fsync(self.lock_fd.fileno())  # Force write to disk
+            
+            return self
+            
+        except (IOError, OSError) as e:
+            # Lock is already held by another process
+            if self.lock_fd:
+                self.lock_fd.close()
+                self.lock_fd = None
+            
+            # Check if this is a "resource unavailable" error (lock already held)
+            if e.errno == 35 or e.errno == 11 or "Resource temporarily unavailable" in str(e):
+                # Try to read the existing lock file to show which process holds it
+                try:
+                    with open(self.lock_file, 'r') as f:
+                        content = f.read().strip()
+                        lines = content.split('\n') if content else []
+                        if len(lines) >= 2 and lines[0] and lines[1]:
+                            try:
+                                pid = lines[0]
+                                timestamp = float(lines[1])
+                                lock_age = time.time() - timestamp
+                                print(f"❌ Another batch creation process is already running!")
+                                print(f"   Process ID: {pid}")
+                                print(f"   Lock age: {lock_age:.1f} seconds")
+                                print(f"   Lock file: {self.lock_file}")
+                                print(f"\n💡 Options:")
+                                print(f"   1. Wait for the other process to complete")
+                                print(f"   2. Kill the other process: kill {pid}")
+                                print(f"   3. Remove stale lock (if process is dead): rm {self.lock_file}")
+                            except (ValueError, IndexError):
+                                print(f"❌ Another batch creation process is running (lock file: {self.lock_file})")
+                        else:
+                            print(f"❌ Another batch creation process is running (lock file: {self.lock_file})")
+                except:
+                    print(f"❌ Another batch creation process is running (lock file: {self.lock_file})")
+            else:
+                # Some other I/O error
+                print(f"❌ Error acquiring lock: {e}")
+            
+            raise SystemExit(1)
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Release the lock."""
+        if self.lock_fd:
+            try:
+                fcntl.flock(self.lock_fd.fileno(), fcntl.LOCK_UN)
+                self.lock_fd.close()
+                # Remove lock file
+                try:
+                    os.unlink(self.lock_file)
+                except:
+                    pass
+            except:
+                pass
+            finally:
+                self.lock_fd = None
 
 def load_config(config_path: str) -> Dict[str, Any]:
     """Load configuration from file."""
@@ -60,37 +142,44 @@ def create_jobs(config: Dict[str, Any]) -> None:
     print("🚀 Creating OpenAI batch jobs...")
     
     checkpoint_dir = config.get("checkpoint_dir", "data/checkpoints")
+    lock_file = os.path.join(checkpoint_dir, ".batch_creation.lock")
     
-    # Load preprocessing data
-    string_dict, field_hash_mapping, string_counts = load_preprocessing_data(checkpoint_dir)
-    
-    print(f"📊 Loaded preprocessing data: {len(string_dict)} strings")
-    
-    # Initialize batch pipeline with proper context management
-    try:
-        with BatchEmbeddingPipeline(config) as pipeline:
-            # Create batch jobs
-            result = pipeline.create_batch_jobs_only(
-                string_dict, field_hash_mapping, string_counts, checkpoint_dir
-            )
-            
-            if result['status'] == 'jobs_created':
-                print(f"\n✅ Successfully created {result['jobs_created']} batch jobs!")
-                print(f"📋 Total requests: {result['total_requests']:,}")
-                print(f"💰 Estimated cost savings: ${result['estimated_cost_savings']:.4f}")
-                print(f"⏱️  Creation time: {result['elapsed_time']:.2f} seconds")
-                print(f"\n📋 Next steps:")
-                print(f"   1. Wait for OpenAI to process your jobs (up to 24 hours)")
-                print(f"   2. Check status: python batch_manager.py --status")
-                print(f"   3. Download results: python batch_manager.py --download")
-            elif result['status'] == 'no_work':
-                print("ℹ️  No new work to process - all eligible strings already processed")
-            else:
-                print(f"❌ Unexpected result: {result}")
+    # Use process lock to prevent multiple creation processes
+    with ProcessLock(lock_file):
+        print("🔒 Acquired process lock - proceeding with batch creation")
+        
+        # Load preprocessing data
+        string_dict, field_hash_mapping, string_counts = load_preprocessing_data(checkpoint_dir)
+        
+        print(f"📊 Loaded preprocessing data: {len(string_dict)} strings")
+        
+        # Initialize batch pipeline with proper context management
+        try:
+            with BatchEmbeddingPipeline(config) as pipeline:
+                # Create batch jobs
+                result = pipeline.create_batch_jobs_only(
+                    string_dict, field_hash_mapping, string_counts, checkpoint_dir
+                )
                 
-    except Exception as e:
-        print(f"❌ Error creating batch jobs: {str(e)}")
-        sys.exit(1)
+                if result['status'] == 'jobs_created':
+                    print(f"\n✅ Successfully created {result['jobs_created']} batch jobs!")
+                    print(f"📋 Total requests: {result['total_requests']:,}")
+                    print(f"💰 Estimated cost savings: ${result['estimated_cost_savings']:.4f}")
+                    print(f"⏱️  Creation time: {result['elapsed_time']:.2f} seconds")
+                    print(f"\n📋 Next steps:")
+                    print(f"   1. Wait for OpenAI to process your jobs (up to 24 hours)")
+                    print(f"   2. Check status: python batch_manager.py --status")
+                    print(f"   3. Download results: python batch_manager.py --download")
+                elif result['status'] == 'no_work':
+                    print("ℹ️  No new work to process - all eligible strings already processed")
+                else:
+                    print(f"❌ Unexpected result: {result}")
+                    
+        except Exception as e:
+            print(f"❌ Error creating batch jobs: {str(e)}")
+            sys.exit(1)
+        
+        print("🔓 Released process lock")
 
 def check_status(config: Dict[str, Any]) -> None:
     """Check status of batch jobs."""
