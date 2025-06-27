@@ -918,12 +918,21 @@ class BatchEmbeddingPipeline:
                 batch_status = self.openai_client.batches.retrieve(batch_job_id)
                 current_status = batch_status.status
                 
+                # Handle both recovered jobs (missing file_metadata) and original jobs
+                request_count = None
+                if 'file_metadata' in job_info:
+                    request_count = job_info['file_metadata'].get('request_count')
+                elif hasattr(batch_status, 'request_counts') and batch_status.request_counts:
+                    # For recovered jobs, try to get request count from OpenAI batch status
+                    request_count = getattr(batch_status.request_counts, 'total', None)
+                
                 job_statuses[batch_job_id] = {
                     'batch_idx': job_info['batch_idx'],
                     'status': current_status,
                     'created_at': job_info['created_at'],
-                    'request_count': job_info['file_metadata']['request_count'],
-                    'output_file_id': getattr(batch_status, 'output_file_id', None)
+                    'request_count': request_count,
+                    'output_file_id': getattr(batch_status, 'output_file_id', None),
+                    'recovered': job_info.get('recovered', False)
                 }
                 
                 # Update local status
@@ -941,14 +950,18 @@ class BatchEmbeddingPipeline:
                 else:
                     failed_count += 1
                 
-                logger.info(f"Job {batch_job_id[:8]}... (batch {job_info['batch_idx'] + 1}): {current_status}")
+                batch_display = job_info.get('batch_idx', 'unknown')
+                if isinstance(batch_display, int):
+                    batch_display += 1
+                logger.info(f"Job {batch_job_id[:8]}... (batch {batch_display}): {current_status}")
                 
             except Exception as e:
                 logger.error(f"Error checking job {batch_job_id}: {str(e)}")
                 job_statuses[batch_job_id] = {
-                    'batch_idx': job_info['batch_idx'],
+                    'batch_idx': job_info.get('batch_idx', 'unknown'),
                     'status': 'error',
-                    'error': str(e)
+                    'error': str(e),
+                    'recovered': job_info.get('recovered', False)
                 }
                 failed_count += 1
         
