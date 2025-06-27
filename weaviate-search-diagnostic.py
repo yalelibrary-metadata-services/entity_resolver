@@ -2,10 +2,13 @@
 """
 Weaviate Vector Search Diagnostic Tool
 
-Performs near_vector searches using the composite field embedding of a given personId.
+Performs near_vector searches using the composite field embedding of a given personId
+or returns random samples of indexed objects for dataset exploration.
 Useful for debugging vector similarity and understanding candidate retrieval.
 
-Usage: python weaviate-search-diagnostic.py <personId> [--limit N] [--distance THRESHOLD]
+Usage: 
+  python weaviate-search-diagnostic.py <personId> [--limit N] [--distance THRESHOLD]
+  python weaviate-search-diagnostic.py --sample [--size N]
 """
 
 import sys
@@ -13,6 +16,7 @@ import os
 import pickle
 import argparse
 import logging
+import random
 from typing import Dict, List, Optional, Any
 import weaviate
 
@@ -213,6 +217,78 @@ class WeaviateSearchDiagnostic:
             print(f"   ✗ Error performing near_vector search: {e}")
             return []
     
+    def get_random_sample(self, sample_size: int = 10) -> List[Dict[str, Any]]:
+        """Get a random sample of indexed objects by personId"""
+        print(f"\n3. Getting random sample of {sample_size} indexed objects...")
+        
+        try:
+            collection = self.weaviate_client.collections.get("EntityString")
+            
+            # First, get the total count to understand the dataset size
+            from weaviate.classes.query import Filter
+            composite_filter = Filter.by_property("field_type").equal("composite")
+            
+            # Get total count
+            total_count = collection.aggregate.over_all(
+                filters=composite_filter,
+                total_count=True
+            ).total_count
+            
+            print(f"   Total composite objects in index: {total_count:,}")
+            
+            if total_count == 0:
+                print("   ✗ No composite objects found in index")
+                return []
+            
+            # Calculate how many to fetch to get a good random sample
+            # We'll fetch more than needed and then randomly sample
+            fetch_limit = min(max(sample_size * 10, 1000), total_count)
+            
+            # Fetch a larger set to sample from
+            query_result = collection.query.fetch_objects(
+                filters=composite_filter,
+                limit=fetch_limit,
+                include_vector=False
+            )
+            
+            print(f"   Fetched {len(query_result.objects)} objects for sampling")
+            
+            # Convert to our result format
+            candidates = []
+            for obj in query_result.objects:
+                props = obj.properties
+                hash_value = props.get('hash_value', '')
+                
+                # Get the actual text content
+                text_content = self.string_dict.get(hash_value, "")
+                
+                # Find the corresponding personId
+                person_id = None
+                for pid, hashes in self.hash_lookup.items():
+                    if hashes.get('composite') == hash_value:
+                        person_id = pid
+                        break
+                
+                result = {
+                    'person_id': person_id or 'Unknown',
+                    'hash_value': hash_value,
+                    'text_content': text_content,
+                    'distance': 'N/A'  # No distance for random samples
+                }
+                candidates.append(result)
+            
+            # Randomly sample from the candidates
+            sample_size = min(sample_size, len(candidates))
+            sampled_results = random.sample(candidates, sample_size)
+            
+            print(f"   ✓ Selected random sample of {len(sampled_results)} objects")
+            
+            return sampled_results
+            
+        except Exception as e:
+            print(f"   ✗ Error getting random sample: {e}")
+            return []
+
     def display_results(self, query_person_id: str, results: List[Dict[str, Any]]):
         """Display search results in a readable format"""
         print(f"\n=== SEARCH RESULTS for {query_person_id} ===")
@@ -224,6 +300,21 @@ class WeaviateSearchDiagnostic:
         for i, result in enumerate(results, 1):
             print(f"\n{i}. PersonId: {result['person_id']}")
             print(f"   Distance: {result['distance']}")
+            print(f"   Hash: {result['hash_value']}")
+            print(f"   Content: {result['text_content'][:200]}...")
+            if len(result['text_content']) > 200:
+                print("   [Content truncated]")
+
+    def display_sample_results(self, results: List[Dict[str, Any]]):
+        """Display random sample results in a readable format"""
+        print(f"\n=== RANDOM SAMPLE RESULTS ===")
+        
+        if not results:
+            print("No results found.")
+            return
+        
+        for i, result in enumerate(results, 1):
+            print(f"\n{i}. PersonId: {result['person_id']}")
             print(f"   Hash: {result['hash_value']}")
             print(f"   Content: {result['text_content'][:200]}...")
             if len(result['text_content']) > 200:
@@ -247,6 +338,16 @@ class WeaviateSearchDiagnostic:
         
         # Display results
         self.display_results(person_id, results)
+
+    def sample(self, sample_size: int = 10):
+        """Main sampling function"""
+        print(f"Random Sample Size: {sample_size}")
+        
+        # Get random sample
+        results = self.get_random_sample(sample_size)
+        
+        # Display results
+        self.display_sample_results(results)
     
     def cleanup(self):
         """Clean up resources"""
@@ -259,31 +360,50 @@ class WeaviateSearchDiagnostic:
 def main():
     """Command-line interface"""
     parser = argparse.ArgumentParser(
-        description='Perform near_vector search using composite field embedding',
+        description='Perform near_vector search using composite field embedding or get random samples',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+  # Vector search for a specific personId
   python weaviate-search-diagnostic.py 1605973#Agent700-17
   python weaviate-search-diagnostic.py 1605973#Agent700-17 --limit 20
   python weaviate-search-diagnostic.py 1605973#Agent700-17 --limit 50 --distance 0.3
+  
+  # Random sampling of indexed objects
+  python weaviate-search-diagnostic.py --sample
+  python weaviate-search-diagnostic.py --sample --size 20
         """
     )
     
-    parser.add_argument('person_id', help='PersonId to search for')
-    parser.add_argument('--limit', type=int, default=10, help='Maximum number of results (default: 10)')
-    parser.add_argument('--distance', type=float, help='Maximum distance threshold for results')
+    # Create mutually exclusive group for search vs sample
+    mode_group = parser.add_mutually_exclusive_group(required=True)
+    mode_group.add_argument('person_id', nargs='?', help='PersonId to search for')
+    mode_group.add_argument('--sample', action='store_true', help='Get random sample of indexed objects')
+    
+    parser.add_argument('--limit', type=int, default=10, help='Maximum number of search results (default: 10)')
+    parser.add_argument('--distance', type=float, help='Maximum distance threshold for search results')
+    parser.add_argument('--size', type=int, default=10, help='Sample size for random sampling (default: 10)')
     
     args = parser.parse_args()
     
-    # Create diagnostic tool and perform search
+    # Validate arguments
+    if not args.sample and not args.person_id:
+        parser.error('Either provide a person_id for search or use --sample for random sampling')
+    
+    # Create diagnostic tool
     diagnostic = WeaviateSearchDiagnostic()
     try:
-        diagnostic.search(args.person_id, args.limit, args.distance)
+        if args.sample:
+            # Perform random sampling
+            diagnostic.sample(args.size)
+        else:
+            # Perform vector search
+            diagnostic.search(args.person_id, args.limit, args.distance)
     except KeyboardInterrupt:
-        print("\n\nSearch interrupted by user.")
+        print("\n\nOperation interrupted by user.")
     except Exception as e:
-        print(f"\n✗ Error during search: {e}")
-        logger.exception("Search failed")
+        print(f"\n✗ Error during operation: {e}")
+        logger.exception("Operation failed")
     finally:
         diagnostic.cleanup()
 
