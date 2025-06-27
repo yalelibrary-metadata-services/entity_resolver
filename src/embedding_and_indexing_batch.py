@@ -1030,7 +1030,9 @@ class BatchEmbeddingPipeline:
                    f"{usage['estimated_active_tokens']:,} active, "
                    f"{total_estimated_tokens:,}/{safe_quota_limit:,} total (can_submit: {within_quota and within_job_limit})")
         
-        return result\n    \n    def create_batch_jobs_only(self, string_dict: Dict[str, str], field_hash_mapping: Dict[str, Dict[str, int]],
+        return result
+    
+    def create_batch_jobs_only(self, string_dict: Dict[str, str], field_hash_mapping: Dict[str, Dict[str, int]],
                              string_counts: Dict[str, int], checkpoint_dir: str) -> Dict[str, Any]:
         """
         Create batch jobs without waiting for completion (manual polling mode).
