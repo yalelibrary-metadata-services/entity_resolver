@@ -38,10 +38,14 @@ DEFAULT_STRING_DICT_PATHS = [
 class WeaviateSearchDiagnostic:
     """Diagnostic tool for Weaviate vector searches"""
     
-    def __init__(self):
+    def __init__(self, load_data=True):
         """Initialize the diagnostic tool"""
         print("=== WEAVIATE SEARCH DIAGNOSTIC ===")
-        self.load_data_structures()
+        self.hash_lookup = None
+        self.string_dict = None
+        
+        if load_data:
+            self.load_data_structures()
         self.connect_weaviate()
     
     def find_file(self, search_paths: List[str]) -> Optional[str]:
@@ -173,14 +177,20 @@ class WeaviateSearchDiagnostic:
                 # Only include composite field results
                 if field_type == 'composite':
                     # Get the actual text content
-                    text_content = self.string_dict.get(hash_value, "")
+                    if self.string_dict:
+                        text_content = self.string_dict.get(hash_value, "")
+                    else:
+                        text_content = props.get('text_content', '')
                     
                     # Find the corresponding personId
                     person_id = None
-                    for pid, hashes in self.hash_lookup.items():
-                        if hashes.get('composite') == hash_value:
-                            person_id = pid
-                            break
+                    if self.hash_lookup:
+                        for pid, hashes in self.hash_lookup.items():
+                            if hashes.get('composite') == hash_value:
+                                person_id = pid
+                                break
+                    else:
+                        person_id = props.get('person_id', 'Unknown')
                     
                     # Get distance from metadata if available
                     distance = 'N/A'
@@ -219,7 +229,7 @@ class WeaviateSearchDiagnostic:
     
     def get_random_sample(self, sample_size: int = 10) -> List[Dict[str, Any]]:
         """Get a random sample of indexed objects by personId"""
-        print(f"\n3. Getting random sample of {sample_size} indexed objects...")
+        print(f"\n2. Getting random sample of {sample_size} indexed objects...")
         
         try:
             collection = self.weaviate_client.collections.get("EntityString")
@@ -244,7 +254,7 @@ class WeaviateSearchDiagnostic:
             # We'll fetch more than needed and then randomly sample
             fetch_limit = min(max(sample_size * 10, 1000), total_count)
             
-            # Fetch a larger set to sample from
+            # Fetch a larger set to sample from - include all properties we need
             query_result = collection.query.fetch_objects(
                 filters=composite_filter,
                 limit=fetch_limit,
@@ -253,24 +263,16 @@ class WeaviateSearchDiagnostic:
             
             print(f"   Fetched {len(query_result.objects)} objects for sampling")
             
-            # Convert to our result format
+            # Convert to our result format - get everything from Weaviate properties
             candidates = []
             for obj in query_result.objects:
                 props = obj.properties
                 hash_value = props.get('hash_value', '')
-                
-                # Get the actual text content
-                text_content = self.string_dict.get(hash_value, "")
-                
-                # Find the corresponding personId
-                person_id = None
-                for pid, hashes in self.hash_lookup.items():
-                    if hashes.get('composite') == hash_value:
-                        person_id = pid
-                        break
+                person_id = props.get('person_id', 'Unknown')  # Get personId directly from Weaviate
+                text_content = props.get('text_content', '')  # Get text directly from Weaviate
                 
                 result = {
-                    'person_id': person_id or 'Unknown',
+                    'person_id': person_id,
                     'hash_value': hash_value,
                     'text_content': text_content,
                     'distance': 'N/A'  # No distance for random samples
@@ -326,6 +328,10 @@ class WeaviateSearchDiagnostic:
         print(f"Search Limit: {limit}")
         if distance_threshold:
             print(f"Distance Threshold: {distance_threshold}")
+        
+        # Ensure data structures are loaded for search functionality
+        if self.hash_lookup is None or self.string_dict is None:
+            self.load_data_structures()
         
         # Get the composite vector for the query personId
         query_vector = self.get_composite_vector(person_id)
@@ -390,8 +396,9 @@ Examples:
     if not args.sample and not args.person_id:
         parser.error('Either provide a person_id for search or use --sample for random sampling')
     
-    # Create diagnostic tool
-    diagnostic = WeaviateSearchDiagnostic()
+    # Create diagnostic tool - only load data structures for search mode
+    load_data = not args.sample
+    diagnostic = WeaviateSearchDiagnostic(load_data=load_data)
     try:
         if args.sample:
             # Perform random sampling
