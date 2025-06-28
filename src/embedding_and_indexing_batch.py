@@ -1189,7 +1189,7 @@ class BatchEmbeddingPipeline:
                     post_quota_pct = post_submission_usage['total_active_requests'] / self.request_quota_limit
                     
                     logger.info(f"📊 Post-submission quota: {post_submission_usage['total_active_requests']:,}/{self.request_quota_limit:,} "
-                               f"({post_quota_pct*100:.1f}%)")
+                               f"({post_quota_pct*100:.1f}%) - {post_submission_usage['active_jobs']} active jobs")
                     
                     # Stop if we're approaching quota limits
                     if post_quota_pct > 0.90:  # Stop at 90% after submission
@@ -1743,9 +1743,12 @@ class BatchEmbeddingPipeline:
                     batches = self.openai_client.batches.list(limit=100)
                 
                 for batch in batches.data:
-                    # Store status for ALL embedding batches (not just ours)
+                    # Only count batches created by our pipeline
                     endpoint = getattr(batch, 'endpoint', '')
-                    if '/embeddings' in endpoint or endpoint == '/v1/embeddings':
+                    metadata = getattr(batch, 'metadata', {})
+                    
+                    if (('/embeddings' in endpoint or endpoint == '/v1/embeddings') and
+                        metadata and metadata.get('created_by') == 'embedding_and_indexing_batch'):
                         # CRITICAL FIX: Count ALL submitted requests that might consume quota
                         # OpenAI's 1M request limit apparently includes failed jobs until they're cleaned up
                         if batch.status in ['pending', 'validating', 'in_progress', 'finalizing', 'failed']:
@@ -1778,7 +1781,7 @@ class BatchEmbeddingPipeline:
                 else:
                     break
             
-            logger.info(f"Found {active_jobs} active embedding batch jobs using ~{estimated_active_tokens:,} tokens and {total_active_requests:,} requests")
+            logger.info(f"Found {active_jobs} active embedding batch jobs using ~{estimated_active_tokens:,} tokens and {total_active_requests:,} requests (includes {len(api_batch_statuses)} total jobs consuming quota)")
             
             # Count failed jobs for better visibility into quota consumption
             failed_jobs = len([batch_id for batch_id, status in api_batch_statuses.items() if status == 'failed'])
