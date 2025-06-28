@@ -237,6 +237,7 @@ def check_status(config: Dict[str, Any]) -> None:
                     ('validating', "🔍 Validating"), 
                     ('in_progress', "🔄 In Progress"),
                     ('finalizing', "🏁 Finalizing"),
+                    ('cancelling', "🛑 Cancelling"),
                     ('completed', "✅ Completed"),
                     ('failed', "❌ Failed"),
                     ('expired', "⏰ Expired"),
@@ -388,10 +389,12 @@ def cancel_uncompleted_jobs(config: Dict[str, Any]) -> None:
             print(f"📡 Checking status of {len(all_jobs)} discovered batch jobs...")
             
             cancellable_statuses = ['pending', 'validating', 'in_progress', 'finalizing']
+            # Note: 'cancelling' status means already being cancelled, so not in cancellable list
             jobs_to_cancel = []
             completed_jobs = []
             already_failed = []
             cancelled_jobs = []
+            cancelling_jobs = []
             
             for job_id, batch_status in all_jobs.items():
                 try:
@@ -405,6 +408,8 @@ def cancel_uncompleted_jobs(config: Dict[str, Any]) -> None:
                         already_failed.append(job_id)
                     elif current_status == 'cancelled':
                         cancelled_jobs.append(job_id)
+                    elif current_status == 'cancelling':
+                        cancelling_jobs.append(job_id)
                         
                 except Exception as e:
                     print(f"⚠️  Could not check job {job_id}: {e}")
@@ -415,6 +420,7 @@ def cancel_uncompleted_jobs(config: Dict[str, Any]) -> None:
         print(f"   Already completed: {len(completed_jobs)}")
         print(f"   Already failed: {len(already_failed)}")
         print(f"   Already cancelled: {len(cancelled_jobs)}")
+        print(f"   Currently cancelling: {len(cancelling_jobs)}")
         
         if already_failed:
             print(f"\n💡 Note: {len(already_failed)} failed jobs cannot be cancelled (they're already failed)")

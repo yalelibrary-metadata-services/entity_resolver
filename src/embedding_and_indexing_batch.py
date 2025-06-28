@@ -1013,13 +1013,16 @@ class BatchEmbeddingPipeline:
                             if error.code == 'request_limit_exceeded':
                                 logger.warning(f"🛑 QUOTA EXCEEDED: OpenAI's 1M request limit reached!")
                                 logger.warning(f"   Failed job {batch_job_id} should be cancelled to free quota")
-                    return None  # Return None to indicate failure
+                                # Return special indicator for quota exceeded
+                                return 'QUOTA_EXCEEDED'
+                    return None  # Return None for other types of failures
                 else:
                     logger.info(f"✅ Submitted batch job {batch_job_id} for batch {batch_idx + 1} (status: {batch_status.status})")
                     
             except Exception as status_check_error:
                 logger.warning(f"⚠️  Could not verify status of submitted job {batch_job_id}: {status_check_error}")
-                # Still return the job ID - the status check will catch issues later
+                logger.warning(f"🛑 Stopping submissions due to status verification failure (may be quota limit)")
+                return None  # Return None to stop further submissions when we can't verify status
             
             return batch_job_id
             
@@ -1176,7 +1179,7 @@ class BatchEmbeddingPipeline:
             batch_data, batch_idx = self.pending_batches.pop(0)
             batch_job_id = self._submit_single_batch(batch_data, batch_idx, checkpoint_dir)
             
-            if batch_job_id:
+            if batch_job_id and batch_job_id != 'QUOTA_EXCEEDED':
                 self.active_batch_queue.append(batch_job_id)
                 submitted_count += 1
                 logger.info(f"✅ Successfully submitted batch {batch_job_id[:8]}... ({submitted_count}/{max_to_attempt})")
@@ -1201,8 +1204,21 @@ class BatchEmbeddingPipeline:
                     logger.warning(f"⚠️  Could not verify quota after submission: {post_check_error}")
                     # Continue but be cautious
                 
+            elif batch_job_id == 'QUOTA_EXCEEDED':
+                # Put the batch back at the front and enter polling mode
+                self.pending_batches.insert(0, (batch_data, batch_idx))
+                logger.warning(f"🔄 Quota exceeded - entering polling mode for batch {batch_idx + 1}")
+                
+                # Enter polling loop - check every 30 minutes for quota availability
+                if self._wait_for_quota_recovery(checkpoint_dir):
+                    logger.info(f"🎉 Quota recovered - resuming submissions from batch {batch_idx + 1}")
+                    continue  # Try this batch again
+                else:
+                    logger.warning(f"⏰ Quota polling timed out or failed - stopping submissions")
+                    break
+                
             else:
-                # If submission failed, put the batch back at the front
+                # If submission failed for other reasons, put the batch back at the front
                 self.pending_batches.insert(0, (batch_data, batch_idx))
                 logger.warning(f"❌ Failed to submit batch {batch_idx + 1} - stopping further attempts")
                 break  # Stop trying if any submission fails
@@ -1750,11 +1766,11 @@ class BatchEmbeddingPipeline:
                     if (('/embeddings' in endpoint or endpoint == '/v1/embeddings') and
                         metadata and metadata.get('created_by') == 'embedding_and_indexing_batch'):
                         # Track all jobs for visibility, but only count quota for non-failed jobs
-                        if batch.status in ['pending', 'validating', 'in_progress', 'finalizing', 'failed', 'cancelled', 'completed']:
+                        if batch.status in ['pending', 'validating', 'in_progress', 'finalizing', 'failed', 'cancelled', 'cancelling', 'completed']:
                             api_batch_statuses[batch.id] = batch.status
                             
                             # Only count quota for jobs that actually consume quota (not failed/cancelled/completed)
-                            if batch.status in ['pending', 'validating', 'in_progress', 'finalizing']:
+                            if batch.status in ['pending', 'validating', 'in_progress', 'finalizing', 'cancelling']:
                                 # Get request count from OpenAI for accurate tracking
                                 if hasattr(batch, 'request_counts') and batch.request_counts:
                                     request_count = getattr(batch.request_counts, 'total', 0)
@@ -1805,6 +1821,72 @@ class BatchEmbeddingPipeline:
                 'available_token_quota': self.token_quota_limit // 2,  # Conservative fallback
                 'available_request_quota': self.request_quota_limit // 2  # Conservative fallback
             }
+    
+    def _wait_for_quota_recovery(self, checkpoint_dir: str, max_wait_hours: int = 32) -> bool:
+        """
+        Wait for quota to recover by polling every 30 minutes.
+        
+        Args:
+            checkpoint_dir: Directory for checkpoints
+            max_wait_hours: Maximum hours to wait (default 32 hours)
+            
+        Returns:
+            True if quota recovered, False if timed out or failed
+        """
+        poll_interval_minutes = 30
+        poll_interval_seconds = poll_interval_minutes * 60
+        max_polls = (max_wait_hours * 60) // poll_interval_minutes  # Calculate max polling attempts
+        
+        logger.info(f"⏰ Starting quota recovery polling (every {poll_interval_minutes} minutes, max {max_wait_hours} hours)")
+        
+        for poll_attempt in range(max_polls):
+            try:
+                # Check if any active jobs have completed to free up quota
+                logger.info(f"🔍 Checking for completed jobs that may have freed quota (attempt {poll_attempt + 1}/{max_polls})")
+                # Note: Failed jobs should automatically free quota once they reach 'failed' status
+                # We don't need to "clean up" failed jobs - they don't consume quota
+                
+                # Check current quota usage
+                current_usage = self._get_current_usage()
+                quota_pct = current_usage['total_active_requests'] / self.request_quota_limit
+                
+                logger.info(f"📊 Quota check (poll {poll_attempt + 1}): {current_usage['total_active_requests']:,}/{self.request_quota_limit:,} "
+                           f"({quota_pct*100:.1f}%) - {current_usage['active_jobs']} active jobs")
+                
+                # Check if we have enough quota to submit new batches (use 80% threshold)
+                if quota_pct <= 0.80:
+                    logger.info(f"🎉 Quota recovered to {quota_pct*100:.1f}% - ready to resume submissions!")
+                    return True
+                
+                # If this is the last attempt, don't wait
+                if poll_attempt + 1 >= max_polls:
+                    logger.warning(f"⏰ Reached maximum polling time ({max_wait_hours} hours) - quota still at {quota_pct*100:.1f}%")
+                    break
+                
+                # Wait for next poll
+                logger.info(f"⏳ Quota still at {quota_pct*100:.1f}% - waiting {poll_interval_minutes} minutes for next check...")
+                
+                # Save checkpoint before long wait
+                try:
+                    self.save_checkpoint(checkpoint_dir)
+                    logger.debug(f"💾 Saved checkpoint during polling wait")
+                except Exception as save_error:
+                    logger.warning(f"⚠️  Could not save checkpoint during polling: {save_error}")
+                
+                time.sleep(poll_interval_seconds)
+                
+            except KeyboardInterrupt:
+                logger.info(f"⏹️  Quota polling interrupted by user")
+                return False
+            except Exception as poll_error:
+                logger.error(f"❌ Error during quota polling (attempt {poll_attempt + 1}): {poll_error}")
+                if poll_attempt + 1 >= max_polls:
+                    break
+                logger.info(f"🔄 Continuing to next poll attempt in {poll_interval_minutes} minutes...")
+                time.sleep(poll_interval_seconds)
+        
+        logger.warning(f"⏰ Quota recovery polling timed out after {max_wait_hours} hours")
+        return False
     
     def _probe_quota_availability(self) -> Dict[str, Any]:
         """
