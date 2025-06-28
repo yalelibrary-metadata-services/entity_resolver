@@ -290,7 +290,9 @@ class WeaviateSearchDiagnostic:
             # Perform near_vector search for each sampled title
             all_results = []
             for i, title_obj in enumerate(sampled_titles, 1):
-                print(f"\n   Search {i}/{len(sampled_titles)} - Title: '{title_obj['text_content'][:50]}...'")
+                title_text = title_obj['text_content']
+                print(f"\n   🔍 Search {i}/{len(sampled_titles)}")
+                print(f"   📖 Title: '{title_text}'")
                 
                 # Perform near_vector search
                 search_results = collection.query.near_vector(
@@ -377,9 +379,12 @@ class WeaviateSearchDiagnostic:
             return
         
         for i, result in enumerate(results, 1):
-            print(f"\n{i}. Query Title: {result['query_title']}")
-            print(f"   Query Hash: {result['query_hash']}")
-            print(f"   Matches found: {len(result['matches'])}")
+            print(f"\n{'='*80}")
+            print(f"🔍 SEARCH {i} - QUERY TITLE:")
+            print(f"📖 '{result['query_title']}'")
+            print(f"📋 Query Hash: {result['query_hash']}")
+            print(f"🎯 Matches found: {len(result['matches'])}")
+            print(f"{'='*80}")
             
             for j, match in enumerate(result['matches'], 1):
                 print(f"\n   Match {j}:")
