@@ -749,10 +749,20 @@ def recover_all_jobs(config: Dict[str, Any]) -> None:
 def reset_embedding_stage(config: Dict[str, Any]) -> None:
     """Reset all embedding_and_indexing stage data."""
     print("🗑️  Resetting embedding_and_indexing stage...")
+    _reset_embedding_stage_internal(config, preserve_tracking=False)
+
+def reset_embedding_stage_selective(config: Dict[str, Any]) -> None:
+    """Reset embedding stage but preserve processed hash tracking to avoid reprocessing."""
+    print("🗑️  Resetting embedding_and_indexing stage (preserving tracking data)...")
+    _reset_embedding_stage_internal(config, preserve_tracking=True)
+
+def _reset_embedding_stage_internal(config: Dict[str, Any], preserve_tracking: bool = False) -> None:
+    """Internal function to reset embedding stage with optional tracking preservation."""
     
     checkpoint_dir = config.get("checkpoint_dir", "data/checkpoints")
     
     files_deleted = []
+    files_preserved = []
     weaviate_collection_deleted = False
     
     try:
@@ -782,13 +792,12 @@ def reset_embedding_stage(config: Dict[str, Any]) -> None:
                 except:
                     pass
         
-        # Delete real-time processing checkpoints
+        # Define files to potentially delete
         real_time_files = [
             os.path.join(checkpoint_dir, 'processed_hashes.pkl')
         ]
         
-        # Delete batch processing checkpoints
-        batch_files = [
+        batch_processing_files = [
             os.path.join(checkpoint_dir, 'batch_processed_hashes.pkl'),
             os.path.join(checkpoint_dir, 'batch_jobs.pkl')
         ]
@@ -797,33 +806,61 @@ def reset_embedding_stage(config: Dict[str, Any]) -> None:
         import glob
         batch_request_pattern = os.path.join(checkpoint_dir, 'batch_requests_*.jsonl')
         batch_result_pattern = os.path.join(checkpoint_dir, 'batch_results_*.jsonl')
+        batch_files = glob.glob(batch_request_pattern) + glob.glob(batch_result_pattern)
         
-        batch_files.extend(glob.glob(batch_request_pattern))
-        batch_files.extend(glob.glob(batch_result_pattern))
+        # Determine what to delete based on preserve_tracking flag
+        if preserve_tracking:
+            print("📁 Deleting job and file data (preserving hash tracking)...")
+            # Preserve processed hashes but delete job tracking and files
+            files_to_delete = [os.path.join(checkpoint_dir, 'batch_jobs.pkl')] + batch_files
+            files_to_preserve = [
+                os.path.join(checkpoint_dir, 'processed_hashes.pkl'),
+                os.path.join(checkpoint_dir, 'batch_processed_hashes.pkl')
+            ]
+        else:
+            print("📁 Deleting all checkpoint files...")
+            # Delete everything
+            files_to_delete = real_time_files + batch_processing_files + batch_files
+            files_to_preserve = []
         
-        # Combine all files to delete
-        all_files = real_time_files + batch_files
-        
-        # Delete files
-        print("📁 Deleting checkpoint files...")
-        for file_path in all_files:
+        # Delete specified files
+        for file_path in files_to_delete:
             if os.path.exists(file_path):
                 os.remove(file_path)
                 files_deleted.append(os.path.basename(file_path))
                 print(f"   ✅ Deleted: {os.path.basename(file_path)}")
+        
+        # Track preserved files
+        for file_path in files_to_preserve:
+            if os.path.exists(file_path):
+                files_preserved.append(os.path.basename(file_path))
+                print(f"   💾 Preserved: {os.path.basename(file_path)}")
         
         # Summary
         print(f"\n🎉 Reset Summary:")
         if weaviate_collection_deleted:
             print(f"   🗄️  Dropped EntityString collection from Weaviate")
         if files_deleted:
-            print(f"   📁 Deleted {len(files_deleted)} checkpoint files:")
+            print(f"   📁 Deleted {len(files_deleted)} files:")
             for filename in files_deleted:
                 print(f"      • {filename}")
-        else:
-            print("   ℹ️  No checkpoint files found to delete")
+        if files_preserved:
+            print(f"   💾 Preserved {len(files_preserved)} tracking files:")
+            for filename in files_preserved:
+                print(f"      • {filename}")
+        if not files_deleted and not files_preserved:
+            print("   ℹ️  No files found to delete or preserve")
         
-        print(f"\n📋 Embedding stage reset complete. You can now:")
+        if preserve_tracking:
+            print(f"\n📋 Selective reset complete. Previously processed strings will be skipped.")
+            print(f"   Benefits:")
+            print(f"   • Avoids reprocessing already embedded strings")
+            print(f"   • Saves API costs and processing time")
+            print(f"   • Maintains processing history")
+        else:
+            print(f"\n📋 Full reset complete. All tracking data cleared.")
+        
+        print(f"\n   You can now:")
         print(f"   • Run embedding with real-time processing")
         print(f"   • Run embedding with batch processing: python batch_manager.py --create")
         
@@ -883,6 +920,8 @@ Examples:
                              help='Download and process completed batch results')
     action_group.add_argument('--reset', action='store_true',
                              help='Reset embedding_and_indexing stage (clear all checkpoints and files)')
+    action_group.add_argument('--reset-selective', action='store_true',
+                             help='Reset embedding stage but preserve processed hash tracking to avoid reprocessing')
     action_group.add_argument('--recover', action='store_true',
                              help='Recover all batch jobs from OpenAI API (useful when checkpoints are corrupted)')
     action_group.add_argument('--investigate', action='store_true',
@@ -908,7 +947,7 @@ Examples:
     config = load_config(args.config)
     
     # For reset, recover, investigate, resubmit, and cancel commands, we don't need batch processing to be enabled
-    if not args.reset and not args.recover and not args.investigate and not args.resubmit and not args.cancel and not config.get('use_batch_embeddings', False):
+    if not args.reset and not args.reset_selective and not args.recover and not args.investigate and not args.resubmit and not args.cancel and not config.get('use_batch_embeddings', False):
         print("⚠️  Batch embeddings are not enabled in configuration.")
         print("   Set 'use_batch_embeddings: true' in your config.yml")
         sys.exit(1)
@@ -923,6 +962,8 @@ Examples:
             download_results(config)
         elif args.reset:
             reset_embedding_stage(config)
+        elif args.reset_selective:
+            reset_embedding_stage_selective(config)
         elif args.recover:
             recover_all_jobs(config)
         elif args.investigate:
