@@ -1,0 +1,107 @@
+{
+  "metadata": {
+    "generated_at": "20250628_143022",
+    "generated_by": "Subject Enhancement Reporting Module",
+    "pipeline_config": {
+      "quality_audit_enabled": true,
+      "imputation_enabled": true,
+      "quality_auto_remediate": true,
+      "quality_confidence_threshold": 0.80,
+      "imputation_confidence_threshold": 0.70
+    }
+  },
+  "summary": {
+    "total_records": 15420,
+    "records_with_subjects": 12358,
+    "records_missing_subjects": 3062,
+    "quality_evaluated_records": 8742,
+    "quality_remediated_records": 324,
+    "imputed_records": 2156,
+    "enhancement_coverage": 0.712
+  },
+  "quality_audit": {
+    "enabled": true,
+    "evaluated_records": [
+      {
+        "record_id": "53144#Agent700-22",
+        "person_name": "Schubert, Franz",
+        "current_subject": "Photography in archaeology",
+        "remediation_required": true,
+        "alternative_available": true
+      }
+    ],
+    "remediated_records": [
+      {
+        "record_id": "53144#Agent700-22",
+        "person_name": "Schubert, Franz",
+        "original_subject": "Photography",
+        "improved_subject": "Photography in archaeology",
+        "confidence": 0.85
+      }
+    ],
+    "statistics": {
+      "total_evaluated": 8742,
+      "remediation_rate": 0.037,
+      "records_needing_remediation": 456,
+      "successful_remediations": 324
+    }
+  },
+  "subject_imputation": {
+    "enabled": true,
+    "imputed_records": [
+      {
+        "record_id": "67890#Agent100-15",
+        "person_name": "Mozart, Wolfgang Amadeus",
+        "composite_field": "Title: Piano Sonata No. 11\nRoles: Composer\nProvision: Vienna: 1783",
+        "imputed_subject": "Classical music--18th century",
+        "confidence": 0.78,
+        "alternative_count": 12
+      }
+    ],
+    "statistics": {
+      "total_imputed": 2156,
+      "imputation_rate": 0.704,
+      "average_confidence": 0.743,
+      "high_confidence_count": 1678
+    }
+  },
+  "detailed_results": [
+    {
+      "record_id": "53144#Agent700-22",
+      "composite_field": "Title: Archäologie und Photographie: fünfzig Beispiele zur Geschichte und Methode\nSubjects: Photography in archaeology\nProvision: Mainz: P. von Zabern, 1978",
+      "person_name": "Schubert, Franz",
+      "title": "Archäologie und Photographie: fünfzig Beispiele zur Geschichte und Methode",
+      "current_subject": "Photography in archaeology",
+      "enhancement_history": [
+        {
+          "type": "quality_audit",
+          "timestamp": "20250628_143022",
+          "remediation_required": true,
+          "confidence": 0.85,
+          "action_taken": "subject_improved",
+          "original_subject": "Photography",
+          "improved_subject": "Photography in archaeology",
+          "improvement_reason": "semantic_similarity_analysis"
+        }
+      ]
+    },
+    {
+      "record_id": "67890#Agent100-15",
+      "composite_field": "Title: Piano Sonata No. 11\nRoles: Composer\nProvision: Vienna: 1783",
+      "person_name": "Mozart, Wolfgang Amadeus",
+      "title": "Piano Sonata No. 11",
+      "current_subject": "Classical music--18th century",
+      "enhancement_history": [
+        {
+          "type": "subject_imputation",
+          "timestamp": "20250628_143022",
+          "action_taken": "subject_imputed",
+          "imputed_subject": "Classical music--18th century",
+          "confidence": 0.78,
+          "alternative_count": 12,
+          "method": "composite_field_vector_similarity"
+        }
+      ]
+    }
+  ]
+}
