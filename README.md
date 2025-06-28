@@ -38,8 +38,17 @@ python main.py --config config.yml
 # Set use_batch_embeddings: true in config.yml
 python main.py --config config.yml
 
+# Environment-specific execution
+PIPELINE_ENV=prod python main.py --config config.yml  # Production settings
+PIPELINE_ENV=local python main.py --config config.yml # Local settings (default)
+
 # Run specific stages
 python main.py --start preprocessing --end training
+
+# Subject enhancement stages
+python main.py --start subject_quality --end subject_quality    # Quality audit only
+python main.py --start subject_imputation --end subject_imputation  # Imputation only
+python main.py --start subject_quality --end subject_imputation     # Both enhancement stages
 
 # Manual batch processing
 python main.py --batch-status     # Check batch job status
@@ -67,12 +76,13 @@ python main.py --status
 
 ## 🏗️ System Architecture
 
-### Dual Classification Approach
+### Multi-Layer Architecture
 
-The system implements two complementary classification pipelines:
+The system implements three complementary processing layers:
 
 1. **Main Entity Resolution Pipeline**: Identifies matching person entities across catalog records
 2. **Individual Record Classification**: Classifies individual records into hierarchical taxonomy categories
+3. **Subject Enhancement Pipeline**: Automated quality audit and imputation for subject fields using vector similarity
 
 ### Core Pipeline Stages
 
@@ -80,21 +90,30 @@ The system implements two complementary classification pipelines:
 graph LR
     A[Input CSV<br/>MARC Records] --> B[Preprocessing<br/>Hash Deduplication]
     B --> C[Embedding & Indexing<br/>OpenAI + Weaviate]
-    C --> D[Training<br/>Feature Engineering]
+    C --> S[Subject Enhancement<br/>Quality & Imputation]
+    S --> D[Training<br/>Feature Engineering]
     D --> E[Classification<br/>Entity Matching]
     E --> F[Reporting<br/>Results & Analysis]
     
     G[Individual Records] --> H[Parallel API<br/>Classification]
     H --> I[SetFit Training<br/>Taxonomy Model]
     I --> J[Hierarchical<br/>Categories]
+    
+    C --> K[Vector Similarity<br/>Analysis]
+    K --> L[Subject Quality<br/>Audit]
+    K --> M[Missing Subject<br/>Imputation]
+    L --> N[Enhanced Metadata]
+    M --> N
 ```
 
 ### Technology Stack
-- **Vector Database**: Weaviate with HNSW indexing
-- **Embeddings**: OpenAI text-embedding-3-small (1536 dimensions)
+- **Vector Database**: Weaviate with HNSW indexing and environment-specific optimization
+- **Embeddings**: OpenAI text-embedding-3-small (1536 dimensions) with Batch API integration
 - **ML Framework**: Custom logistic regression with gradient descent
 - **Taxonomy Classification**: SetFit (Sentence Transformers + logistic head)
 - **Parallel Processing**: asyncio/aiohttp for API rate limit optimization
+- **Subject Enhancement**: Vector similarity analysis with weighted centroid calculation
+- **Configuration Management**: Environment-adaptive resource allocation (local/production)
 
 ## 📋 Data Flow & Processing
 
@@ -135,10 +154,13 @@ Pre-pipeline data preparation uses XQuery extraction from BIBFRAME catalog data:
 - Ideal for development and smaller datasets
 
 **Batch Processing** (`src/embedding_and_indexing_batch.py`):
-- OpenAI Batch API with 50% cost savings
-- Asynchronous processing with 24-hour turnaround
-- Manual polling - no need to keep scripts running
-- Automatic batching (up to 50,000 requests per batch)
+- OpenAI Batch API with 50% cost savings and 24-hour turnaround
+- Advanced quota management (500M tokens, 1M requests) with safety margins
+- Manual polling system - no need to keep scripts running continuously
+- Automatic batching (up to 50,000 requests per batch file)
+- Comprehensive job tracking, recovery, and blacklist management
+- Concurrent job limiting (up to 50 simultaneous batch jobs)
+- Download retry logic with gateway timeout handling
 - Ideal for production and large datasets (31M+ strings)
 
 **Common Features**:
@@ -147,7 +169,28 @@ Pre-pipeline data preparation uses XQuery extraction from BIBFRAME catalog data:
 - Comprehensive error handling and retry logic
 - **Output**: Searchable vector index for similarity matching
 
-### 3. Training (`src/training.py`)
+### 3. Subject Enhancement
+**Quality Audit** (`src/subject_quality.py`):
+- Evaluates existing subject field quality using composite field vector similarity
+- Automatically identifies low-quality subject assignments
+- Finds better alternatives through semantic similarity analysis
+- Applies high-confidence improvements with configurable thresholds
+- Generates detailed audit reports with remediation statistics
+
+**Subject Imputation** (`src/subject_imputation.py`):
+- Fills missing subject fields using vector join strategy
+- Calculates weighted centroid from semantically similar composite fields
+- Implements confidence scoring for imputation quality
+- Uses performance caching with configurable size limits
+- Provides comprehensive imputation results and statistics
+
+**Configuration**:
+- Quality audit: 70% similarity threshold, 60% remediation threshold
+- Imputation: 65% similarity threshold, 70% confidence threshold
+- Caching: 10,000 entry limit with automatic size management
+- Parallel processing with environment-specific worker allocation
+
+### 4. Training (`src/training.py`)
 - **Purpose**: Train logistic regression classifier on labeled entity pairs
 - **Algorithm**: Custom gradient descent with L2 regularization
 - **Features**: 5 engineered similarity features with domain-specific scaling
@@ -157,7 +200,7 @@ Pre-pipeline data preparation uses XQuery extraction from BIBFRAME catalog data:
   - Class weighting: 5:1 (positive:negative)
   - Early stopping with validation monitoring
 
-### 4. Classification (`src/classifying.py`)
+### 5. Classification (`src/classifying.py`)
 - **Purpose**: Apply trained model to identify entity matches
 - **Features**:
   - Batch processing with configurable batch sizes
@@ -165,13 +208,14 @@ Pre-pipeline data preparation uses XQuery extraction from BIBFRAME catalog data:
   - Confidence scoring and threshold application
   - Memory management and telemetry collection
 
-### 5. Reporting (`src/reporting.py`)
+### 6. Reporting (`src/reporting.py`)
 - **Purpose**: Generate comprehensive analysis and visualizations
 - **Outputs**:
   - Interactive HTML dashboards
   - Detailed CSV exports with feature analysis
   - Performance visualizations (ROC curves, feature importance)
   - Error analysis and diagnostic reports
+  - Subject enhancement audit reports and imputation statistics
 
 ## 🎯 Feature Engineering System
 
@@ -234,11 +278,14 @@ python setfit/train_setfit_classifier.py \
 
 ### Main Configuration (`config.yml`)
 ```yaml
-# Resource allocation
-preprocessing_workers: 4
-embedding_batch_size: 32
-classification_workers: 8
-classification_batch_size: 500
+# Environment-specific resource allocation (auto-detected)
+PIPELINE_ENV=local  # or 'prod' for production settings
+
+# Resource allocation (environment-adaptive)
+preprocessing_workers: 4            # 32 in production
+embedding_batch_size: 32            # 100 in production
+classification_workers: 8           # 32 in production
+classification_batch_size: 500      # 2000 in production
 
 # OpenAI configuration
 embedding_model: "text-embedding-3-small"
@@ -248,6 +295,21 @@ embedding_dimensions: 1536
 use_batch_embeddings: false        # Set to true for batch processing
 batch_embedding_size: 50000        # Requests per batch file
 batch_manual_polling: true         # Manual polling (recommended)
+token_quota_limit: 500000000       # 500M token quota management
+request_quota_limit: 1000000       # 1M request quota management
+
+# Subject Enhancement Configuration
+subject_quality_audit:
+  enabled: true                     # Enable quality audit
+  similarity_threshold: 0.70        # Composite similarity threshold
+  auto_remediate: true              # Apply high-confidence improvements
+  confidence_threshold: 0.80        # Confidence for auto-remediation
+
+subject_imputation:
+  enabled: true                     # Enable missing subject imputation
+  similarity_threshold: 0.65        # Candidate similarity threshold
+  confidence_threshold: 0.70        # Imputation confidence threshold
+  use_caching: true                 # Performance optimization
 
 # Enabled features
 features:
@@ -280,9 +342,10 @@ feature_groups:
 ## 🔍 Production Features
 
 ### Checkpoint & Resumption System
-- **Complete state persistence** for all pipeline stages
+- **Complete state persistence** for all pipeline stages including subject enhancement
 - **Resumption capability**: Continue from any point of failure
 - **Selective reset**: Reset and re-run specific stages only
+- **Subject enhancement tracking**: Quality audit and imputation progress preservation
 
 ```bash
 # Resume from last successful checkpoint
@@ -293,6 +356,12 @@ python main.py --status
 
 # Reset specific stages and continue
 python main.py --reset training classifying --start training
+
+# Reset subject enhancement stages
+python main.py --reset subject_quality subject_imputation --start subject_quality
+
+# Environment-specific operations
+PIPELINE_ENV=prod python main.py --start subject_enhancement
 ```
 
 ### Error Resilience & Monitoring
@@ -303,10 +372,13 @@ python main.py --reset training classifying --start training
 - **Transaction ID tracking** for multi-threaded debugging
 
 ### Performance Optimization
-- **Batch processing** with configurable worker allocation
+- **Batch processing** with configurable worker allocation (4-64 workers)
 - **Vector similarity optimization** reducing comparisons by 99.23%
 - **Connection pooling** for vector database operations
 - **Progressive candidate retrieval** for large datasets
+- **Environment-adaptive scaling**: Automatic resource allocation based on hardware
+- **Subject enhancement caching**: 10,000-entry imputation cache with size management
+- **Quota management**: Token and request quota tracking with safety margins
 
 ## 📈 Results & Analysis
 

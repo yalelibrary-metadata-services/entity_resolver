@@ -6,18 +6,21 @@ This entity resolution pipeline processes Yale University Library Catalog data (
 
 ## Pipeline Architecture
 
-The system implements a **dual classification approach**:
+The system implements a **triple-layer approach**:
 
 1. **Main Pipeline**: Entity resolution using logistic regression with engineered features
 2. **Auxiliary Classification**: Individual record taxonomy classification using parallel API processing and SetFit models
+3. **Subject Enhancement**: Automated quality audit and imputation for subject fields using vector similarity
 
 ### Core Pipeline Stages
 
 ```
-Input CSV → Preprocessing → Embedding & Indexing → Training → Classification → Reporting
-     ↓            ↓              ↓              ↓            ↓            ↓
-  Hash-based   OpenAI API    Feature Eng.   Similarity   Clustering   HTML/CSV
-  Dedup        Weaviate DB   Scaling        Matching     Results      Reports
+Input CSV → Preprocessing → Embedding & Indexing → Subject Enhancement → Training → Classification → Reporting
+     ↓            ↓              ↓                  ↓                ↓            ↓            ↓
+  Hash-based   OpenAI API    Feature Eng.      Quality Audit    Similarity   Clustering   HTML/CSV
+  Dedup        Weaviate DB   Scaling           Imputation       Matching     Results      Reports
+                Batch API     Environment-      Vector Join      Enhanced     Enhanced     Subject
+                (50% cost)    Specific Config   Centroid Calc    Features     Clusters     Analysis
 ```
 
 ## Project Directory Structure
@@ -36,7 +39,9 @@ entity_resolver/
 │   ├── orchestrating.py                # Pipeline orchestration & stage management
 │   ├── preprocessing.py                # Optimized CSV processing & CRC32-based deduplication
 │   ├── embedding_and_indexing.py       # Real-time OpenAI embeddings & Weaviate integration
-│   ├── embedding_and_indexing_batch.py # Batch OpenAI API (50% cost savings, 24h turnaround)
+│   ├── embedding_and_indexing_batch.py # Advanced Batch OpenAI API (50% cost savings, quota management, recovery)
+│   ├── subject_quality.py              # Subject quality audit using vector similarity analysis
+│   ├── subject_imputation.py           # Missing subject imputation via composite field vectors
 │   ├── feature_engineering.py          # Feature calculation & caching system
 │   ├── training.py                     # Logistic regression classifier training
 │   ├── classifying.py                  # Entity matching & transitive clustering
@@ -47,6 +52,7 @@ entity_resolver/
 │   ├── taxonomy_feature.py             # SetFit taxonomy integration
 │   ├── birth_death_regexes.py          # Temporal entity matching patterns
 │   ├── custom_features.py              # Extensible feature registration system
+│   ├── config_utils.py                 # Environment-specific configuration management
 │   ├── utils.py                        # Utilities & helper functions
 │   ├── visualization.py                # Feature importance & performance plots
 │   └── vector_diagnostics.py           # Vector similarity debugging tools
@@ -78,14 +84,19 @@ entity_resolver/
 │   ├── checkpoints/                    # Pipeline State Persistence
 │   │   ├── pipeline_state.json         # Current pipeline stage status
 │   │   ├── classification_checkpoint.pkl # Classification progress checkpoints
-│   │   ├── hash_lookup.pkl             # PersonId → field hash mappings
+│   │   ├── hash_lookup.pkl             # PersonId → field hash mappings (enhanced with subject flags)
 │   │   ├── string_dict.pkl             # Hash → original string mappings
+│   │   ├── string_counts.pkl           # Hash → frequency count mappings
 │   │   ├── field_hash_mapping.pkl      # Hash → field type relationships
+│   │   ├── composite_subject_mapping.pkl # Composite → subject hash mappings
 │   │   ├── processed_hashes.pkl        # Real-time embedding processing checkpoints
 │   │   ├── batch_processed_hashes.pkl  # Batch embedding processing checkpoints
 │   │   ├── batch_jobs.pkl              # OpenAI batch job tracking and metadata
+│   │   ├── batch_blacklisted_files.pkl # Blacklisted batch files to avoid reprocessing
 │   │   ├── batch_requests_*.jsonl      # JSONL files uploaded to OpenAI Batch API
 │   │   ├── batch_results_*.jsonl       # JSONL results downloaded from OpenAI
+│   │   ├── cache/                      # Performance optimization caches
+│   │   │   └── imputation_cache.pkl    # Subject imputation results cache
 │   │   └── *.pkl                       # Various stage-specific checkpoints
 │   │
 │   ├── output/                         # Results, Reports & Visualizations
@@ -94,7 +105,9 @@ entity_resolver/
 │   │   │   ├── pipeline_metrics.json               # Overall performance metrics
 │   │   │   ├── cluster_summary_report_*.json       # Clustering analysis results
 │   │   │   ├── entity_matches.csv                  # Identified entity matches
-│   │   │   └── entity_clusters.json                # Transitive clustering results
+│   │   │   ├── entity_clusters.json                # Transitive clustering results
+│   │   │   ├── batch_embedding_metrics.json        # Batch processing performance metrics
+│   │   │   └── subject_imputation_results_*.json   # Subject imputation detailed results
 │   │   │
 │   │   ├── 📈 Visualizations & Reports
 │   │   │   ├── plots/                               # Feature analysis visualizations
@@ -105,7 +118,8 @@ entity_resolver/
 │   │   │   │   └── probability_distribution.png
 │   │   │   │
 │   │   │   ├── reports/
-│   │   │   │   └── feature_visualization_report.html # Interactive feature analysis
+│   │   │   │   ├── feature_visualization_report.html # Interactive feature analysis
+│   │   │   │   └── subject_quality_audit_*.json     # Subject quality audit reports
 │   │   │   │
 │   │   │   └── viz/                                 # Pipeline diagrams
 │   │   │       ├── pipeline.svg                     # Main pipeline architecture
@@ -213,6 +227,9 @@ left,right,match
 - **Error Resilience**: Comprehensive exception handling and retry logic
 - **Monitoring**: Detailed telemetry, memory usage tracking, and performance metrics
 - **Scalability**: Configurable batch processing and worker allocation
+- **Environment Adaptation**: Local vs. production resource allocation (4-64 cores, 16GB-247GB RAM)
+- **Subject Enhancement**: Automated quality audit and missing value imputation
+- **Batch Cost Optimization**: OpenAI Batch API integration with 50% cost savings and quota management
 
 ## Performance Characteristics
 
@@ -239,6 +256,10 @@ python main.py --config config.yml
 # Set use_batch_embeddings: true in config.yml
 python main.py --config config.yml
 
+# Environment-specific execution
+PIPELINE_ENV=prod python main.py --config config.yml  # Production settings
+PIPELINE_ENV=local python main.py --config config.yml # Local settings (default)
+
 # Stage-specific execution  
 python main.py --start training --end classification
 
@@ -256,9 +277,18 @@ python main.py --reset training classifying
 ### Batch Processing Management
 ```bash
 # Using dedicated batch manager
-python batch_manager.py --create    # Create batch jobs
-python batch_manager.py --status    # Check job status
-python batch_manager.py --download  # Process results
+python batch_manager.py --create      # Create batch jobs
+python batch_manager.py --status      # Check job status
+python batch_manager.py --download    # Process results
+
+# Advanced batch operations
+python main.py --batch-status          # Check all batch job statuses
+python main.py --batch-results         # Download and process completed results
+python batch_manager.py --recover      # Recover jobs from OpenAI API
+python batch_manager.py --investigate  # Investigate failed batch jobs
+python batch_manager.py --resubmit     # Resubmit failed jobs
+python batch_manager.py --cancel       # Cancel uncompleted jobs (frees quota)
+python batch_manager.py --reset        # Reset embedding stage (clear checkpoints)
 ```
 
 ### Individual Record Classification
@@ -280,13 +310,45 @@ python setfit/train_setfit_classifier.py \
     --output_dir ./setfit_model_output
 ```
 
+### Subject Enhancement Operations
+```bash
+# Manual subject quality audit
+python main.py --start subject_quality --end subject_quality
+
+# Manual subject imputation
+python main.py --start subject_imputation --end subject_imputation
+
+# Combined subject enhancement
+python main.py --start subject_quality --end subject_imputation
+
+# Environment-specific subject enhancement
+PIPELINE_ENV=prod python main.py --start subject_quality --end subject_imputation
+```
+
 ## Recent Developments
+
+### Subject Enhancement System (NEW)
+- **Quality Audit Module**: Automated evaluation of existing subject field quality using composite field vector similarity
+- **Imputation Module**: Missing subject field population using weighted centroid calculation from similar composite fields
+- **Vector-Based Join Strategy**: Leverages semantic similarity to identify appropriate subject values
+- **Automated Remediation**: High-confidence quality improvements with configurable thresholds
+- **Performance Caching**: Imputation results caching with configurable size limits (10,000 entries)
+- **Comprehensive Reporting**: Detailed audit reports with statistics and remediation metrics
+
+### Enhanced Configuration Management
+- **Environment-Specific Settings**: Automatic local vs. production resource allocation
+- **Advanced Resource Tuning**: 64-core production optimization (32 workers, 5000-request batches)
+- **Weaviate Optimization**: Environment-specific HNSW parameters and connection pooling
+- **Feature Group Scaling**: Domain-specific scaling strategies with percentile normalization
+- **Cluster Validation**: Parallel validation with 48 workers for production environments
 
 ### Embedding Processing Enhancements
 - **Batch API Integration**: OpenAI Batch API support with 50% cost savings and 24-hour turnaround
+- **Quota Management**: Token and request quota tracking with safety margins
 - **Manual Polling**: No need to keep scripts running - check status when convenient
 - **Preprocessing Optimization**: CRC32 hashing and pure in-memory processing (15,000-18,000 rows/sec)
 - **Automatic Batching**: Handles large datasets by splitting into 50,000-request batches
+- **Recovery System**: API-based job recovery with blacklist management
 
 ### Individual Record Classification Enhancement
 - **Parallel API Processing**: Optimized for Anthropic rate limits (200K tokens/min)
@@ -299,5 +361,103 @@ python setfit/train_setfit_classifier.py \
 - **Performance Optimization**: Reduced ANN search overhead by 99.23%
 - **Error Analysis**: Comprehensive false positive pattern analysis
 - **Visualization**: Enhanced feature importance and distribution plots
+
+## Configuration System
+
+### Environment-Specific Resource Allocation
+
+The system automatically adapts resource allocation based on the `PIPELINE_ENV` environment variable:
+
+#### Local Development Configuration (default)
+```yaml
+local_resources:
+  preprocessing_workers: 4
+  preprocessing_batch_size: 50
+  embedding_workers: 4
+  embedding_batch_size: 32
+  feature_workers: 4
+  classification_workers: 8
+```
+
+#### Production Configuration (64 cores, 247GB RAM)
+```yaml
+prod_resources:
+  preprocessing_workers: 32               # Utilize half cores for I/O bound preprocessing
+  preprocessing_batch_size: 500          # Larger batches for better memory utilization
+  embedding_workers: 16                  # Balance between API rate limits and parallelism
+  embedding_batch_size: 100              # Larger batches to reduce API overhead
+  feature_workers: 48                    # High parallelism for CPU-intensive computation
+  classification_workers: 32             # High parallelism for classification
+```
+
+### Subject Enhancement Configuration
+
+#### Subject Quality Audit Settings
+```yaml
+subject_quality_audit:
+  enabled: true                      # Enable automatic subject quality audit
+  similarity_threshold: 0.70         # Minimum composite similarity for alternatives
+  remediation_threshold: 0.60        # Quality score threshold for remediation
+  min_alternatives: 3                # Minimum alternative subjects required
+  max_candidates: 100                # Maximum candidate composites to consider
+  frequency_weight: 0.3              # Weight for subject frequency in scoring
+  similarity_weight: 0.7             # Weight for vector similarity in scoring
+  auto_remediate: true               # Automatically apply high-confidence improvements
+  confidence_threshold: 0.80         # Confidence threshold for automatic remediation
+```
+
+#### Subject Imputation Settings
+```yaml
+subject_imputation:
+  enabled: true                      # Enable automatic subject imputation
+  similarity_threshold: 0.65         # Minimum composite similarity for candidates
+  confidence_threshold: 0.70         # Confidence threshold for applying imputed subjects
+  min_candidates: 3                  # Minimum candidate subjects required
+  max_candidates: 150                # Maximum candidate composites to consider
+  frequency_weight: 0.3              # Weight for subject frequency in scoring
+  centroid_weight: 0.7               # Weight for centroid similarity in scoring
+  use_caching: true                  # Enable caching for performance
+  cache_size_limit: 10000            # Maximum cached results
+```
+
+### Batch Processing Configuration
+
+#### OpenAI Batch API Settings
+```yaml
+use_batch_embeddings: true          # Enable OpenAI Batch API (50% cost savings)
+batch_embedding_size: 50000         # Number of requests per batch file
+max_requests_per_file: 50000        # Maximum requests per JSONL file
+batch_manual_polling: true          # Manual polling (recommended)
+batch_poll_interval: 300            # Seconds between status polls (auto mode)
+batch_max_wait_time: 86400          # Maximum wait time (24 hours)
+
+# Quota management
+token_quota_limit: 500000000        # 500M token limit
+request_quota_limit: 1000000        # 1M request limit
+max_concurrent_jobs: 50             # Limit concurrent batch jobs
+quota_safety_margin: 0.1            # 10% safety margin
+```
+
+### Weaviate Environment-Specific Tuning
+
+#### Local Development Settings
+```yaml
+local_weaviate:
+  weaviate_batch_size: 100
+  weaviate_ef: 128
+  weaviate_max_connections: 64
+  weaviate_connection_pool_size: 16
+  weaviate_query_concurrent_limit: 4
+```
+
+#### Production Settings (64 cores, 247GB RAM)
+```yaml
+prod_weaviate:
+  weaviate_batch_size: 1000           # Much larger batch sizes
+  weaviate_ef: 256                    # Higher EF for better recall
+  weaviate_max_connections: 128       # More connections for parallelism
+  weaviate_connection_pool_size: 64   # Match available cores
+  weaviate_query_concurrent_limit: 32 # High concurrency for production
+```
 
 This structure represents a production-ready entity resolution system with comprehensive tooling for analysis, debugging, and performance optimization.

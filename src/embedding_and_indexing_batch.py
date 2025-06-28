@@ -3,8 +3,16 @@ Batch Embedding and Indexing Module for Entity Resolution
 
 This module implements OpenAI's Batch API for embedding generation, providing
 cost-effective processing at 50% lower cost with 24-hour turnaround time.
-Separates embedding generation from indexing to handle the asynchronous nature
-of batch processing.
+
+Features:
+- Automated queue management: Maintains 16 active batches, automatically submitting
+  new ones as slots free up with 30-minute polling intervals
+- Conservative quota limits: Uses 800K request limit (80% of OpenAI's 1M limit)
+- Automatic state persistence and recovery
+- Manual override options for direct control
+
+The automated queue system eliminates manual batch management while respecting
+OpenAI's rate limits and providing robust error handling and recovery.
 """
 
 import os
@@ -86,8 +94,19 @@ class BatchEmbeddingPipeline:
         self.max_concurrent_jobs = config.get("max_concurrent_jobs", 50)  # Limit concurrent jobs
         
         # Request quota management (1M enqueued requests limit)
-        self.request_quota_limit = config.get("request_quota_limit", 1_000_000)  # 1M default OpenAI limit
+        # Use conservative 800K limit (80% of 1M) to prevent quota exceeded errors
+        self.request_quota_limit = config.get("request_quota_limit", 800_000)  # Conservative 800K limit
         self.max_requests_per_job = config.get("max_requests_per_job", 50_000)  # Safety limit per job
+        
+        # Automated queue management - maintain 16 active batches with auto-submission
+        self.max_active_batches = config.get("max_active_batches", 16)  # Max concurrent batches in queue
+        self.queue_poll_interval = config.get("queue_poll_interval", 1800)  # 30 minutes between status checks
+        self.use_automated_queue = config.get("use_automated_queue", True)  # Enable automated queue management
+        
+        # Queue state tracking
+        self.active_batch_queue = []  # List of currently active batch job IDs
+        self.pending_batches = []  # List of batch data waiting for submission
+        self.completed_batches = []  # List of completed batch job IDs
         
         # Embedding fields configuration
         self.embed_fields = config.get("embed_fields", ["composite", "person", "title"])
@@ -791,6 +810,7 @@ class BatchEmbeddingPipeline:
         processed_hashes_path = os.path.join(checkpoint_dir, 'batch_processed_hashes.pkl')
         batch_jobs_path = os.path.join(checkpoint_dir, 'batch_jobs.pkl')
         blacklisted_files_path = os.path.join(checkpoint_dir, 'batch_blacklisted_files.pkl')
+        queue_state_path = os.path.join(checkpoint_dir, 'batch_queue_state.pkl')
         
         if os.path.exists(processed_hashes_path):
             try:
@@ -840,6 +860,44 @@ class BatchEmbeddingPipeline:
                 except Exception as recovery_error:
                     logger.error(f"Failed to recover batch jobs from API: {recovery_error}")
                     logger.info("Starting with empty batch jobs - existing jobs will be rediscovered on status check")
+        
+        # Load queue state
+        if os.path.exists(queue_state_path):
+            try:
+                with open(queue_state_path, 'rb') as f:
+                    queue_state = pickle.load(f)
+                self.active_batch_queue = queue_state.get('active_batch_queue', [])
+                self.pending_batches = queue_state.get('pending_batches', [])
+                self.completed_batches = queue_state.get('completed_batches', [])
+                logger.info(f"Loaded queue state: {len(self.active_batch_queue)} active, "
+                           f"{len(self.pending_batches)} pending, {len(self.completed_batches)} completed")
+            except Exception as e:
+                logger.error(f"Error loading queue state: {str(e)}")
+                self.active_batch_queue = []
+                self.pending_batches = []
+                self.completed_batches = []
+        
+        # Recovery: If we have batch jobs but no queue state, rebuild queue from existing jobs
+        if self.batch_jobs and not self.active_batch_queue and not self.completed_batches:
+            logger.info("🔄 Rebuilding queue state from existing batch jobs...")
+            for batch_job_id, job_info in self.batch_jobs.items():
+                if job_info.get('auto_queue', False):  # Only auto-queue managed jobs
+                    job_status = job_info.get('status', 'unknown')
+                    if job_status in ['submitted', 'pending', 'validating', 'in_progress', 'finalizing']:
+                        self.active_batch_queue.append(batch_job_id)
+                        logger.debug(f"Added job {batch_job_id[:8]}... to active queue (status: {job_status})")
+                    elif job_status in ['completed', 'failed', 'expired', 'cancelled']:
+                        self.completed_batches.append(batch_job_id)
+                        logger.debug(f"Added job {batch_job_id[:8]}... to completed (status: {job_status})")
+            
+            if self.active_batch_queue or self.completed_batches:
+                logger.info(f"🔄 Rebuilt queue: {len(self.active_batch_queue)} active, {len(self.completed_batches)} completed")
+                # Save the rebuilt state
+                try:
+                    self.save_checkpoint(checkpoint_dir)
+                    logger.info("✅ Saved rebuilt queue state")
+                except Exception as e:
+                    logger.warning(f"Could not save rebuilt queue state: {e}")
     
     def save_checkpoint(self, checkpoint_dir: str) -> None:
         """
@@ -854,6 +912,7 @@ class BatchEmbeddingPipeline:
         # Save processed hashes
         processed_hashes_path = os.path.join(checkpoint_dir, 'batch_processed_hashes.pkl')
         batch_jobs_path = os.path.join(checkpoint_dir, 'batch_jobs.pkl')
+        queue_state_path = os.path.join(checkpoint_dir, 'batch_queue_state.pkl')
         
         try:
             with open(processed_hashes_path, 'wb') as f:
@@ -861,11 +920,380 @@ class BatchEmbeddingPipeline:
             
             with open(batch_jobs_path, 'wb') as f:
                 pickle.dump(self.batch_jobs, f)
+            
+            # Save queue state
+            queue_state = {
+                'active_batch_queue': self.active_batch_queue,
+                'pending_batches': self.pending_batches,
+                'completed_batches': self.completed_batches,
+                'saved_at': time.time()
+            }
+            with open(queue_state_path, 'wb') as f:
+                pickle.dump(queue_state, f)
                 
-            logger.info(f"Saved checkpoint: {len(self.processed_hashes)} processed hashes, {len(self.batch_jobs)} batch jobs")
+            logger.info(f"Saved checkpoint: {len(self.processed_hashes)} processed hashes, "
+                       f"{len(self.batch_jobs)} batch jobs, queue state: {len(self.active_batch_queue)} active")
             
         except Exception as e:
             logger.error(f"Error saving checkpoint: {str(e)}")
+    
+    def _submit_single_batch(self, batch_data: List[Tuple[str, str, str, int]], 
+                           batch_idx: int, checkpoint_dir: str) -> Optional[str]:
+        """
+        Submit a single batch to OpenAI and return the batch job ID.
+        
+        Args:
+            batch_data: List of (hash, text, field_type, frequency) tuples
+            batch_idx: Batch index for file naming
+            checkpoint_dir: Directory for saving batch files
+            
+        Returns:
+            Batch job ID if successful, None if failed
+        """
+        try:
+            # Create batch requests file
+            batch_file_path = os.path.join(checkpoint_dir, f'batch_requests_{batch_idx}.jsonl')
+            file_metadata = self._create_batch_requests_file(batch_data, batch_file_path)
+            
+            # Upload file
+            input_file_id = self._upload_batch_file(batch_file_path)
+            
+            # Check quota capacity before creating batch job
+            batch_requests = []
+            with open(batch_file_path, 'r') as f:
+                for line in f:
+                    if line.strip():
+                        import json
+                        batch_requests.append(json.loads(line))
+            
+            quota_check = self._check_quota_capacity(batch_requests)
+            
+            if not quota_check['can_submit']:
+                logger.warning(f"🛑 Quota check failed for batch {batch_idx + 1} - will retry later")
+                # Clean up uploaded file
+                try:
+                    self.openai_client.files.delete(input_file_id)
+                    logger.debug(f"Cleaned up unused uploaded file {input_file_id}")
+                except Exception:
+                    pass
+                return None
+            
+            # Create batch job
+            batch_job_id = self._create_batch_job(
+                input_file_id, 
+                f"Entity resolution batch {batch_idx + 1} (auto-queue)"
+            )
+            
+            # Track batch job
+            self.batch_jobs[batch_job_id] = {
+                'batch_idx': batch_idx,
+                'input_file_id': input_file_id,
+                'file_metadata': file_metadata,
+                'request_count': file_metadata['request_count'],
+                'created_at': time.time(),
+                'status': 'submitted',
+                'auto_queue': True  # Mark as auto-queue managed
+            }
+            
+            logger.info(f"✅ Submitted batch job {batch_job_id} for batch {batch_idx + 1}")
+            return batch_job_id
+            
+        except Exception as e:
+            logger.error(f"Error submitting batch {batch_idx + 1}: {str(e)}")
+            return None
+    
+    def _check_and_update_queue_status(self) -> int:
+        """
+        Check status of active batches and move completed ones out of the queue.
+        Enhanced with robust error handling for API unavailability.
+        
+        Returns:
+            Number of slots freed up
+        """
+        if not self.active_batch_queue:
+            return 0
+            
+        completed_job_ids = []
+        api_errors = 0
+        max_api_errors = len(self.active_batch_queue) // 2  # Allow up to 50% failures
+        
+        for batch_job_id in self.active_batch_queue:
+            try:
+                batch_status = self.openai_client.batches.retrieve(batch_job_id)
+                current_status = batch_status.status
+                
+                # Update local status
+                if batch_job_id in self.batch_jobs:
+                    self.batch_jobs[batch_job_id]['status'] = current_status
+                
+                # Check if batch is completed (success or failure)
+                if current_status in [BatchJobStatus.COMPLETED, BatchJobStatus.FAILED, 
+                                    BatchJobStatus.EXPIRED, BatchJobStatus.CANCELLED]:
+                    completed_job_ids.append(batch_job_id)
+                    
+                    if current_status == BatchJobStatus.COMPLETED:
+                        logger.info(f"✅ Batch job {batch_job_id[:8]}... completed")
+                    else:
+                        logger.warning(f"❌ Batch job {batch_job_id[:8]}... failed with status: {current_status}")
+                        
+            except Exception as e:
+                api_errors += 1
+                error_msg = str(e).lower()
+                
+                # Categorize different types of errors
+                if any(term in error_msg for term in ['timeout', 'connection', 'network', '502', '503', '504']):
+                    logger.warning(f"⚠️  Network/timeout error for batch job {batch_job_id[:8]}...: {str(e)}")
+                elif 'rate limit' in error_msg or '429' in error_msg:
+                    logger.warning(f"⚠️  Rate limit error for batch job {batch_job_id[:8]}...: {str(e)}")
+                    # Add a small delay to respect rate limits
+                    time.sleep(1)
+                elif 'not found' in error_msg or '404' in error_msg:
+                    logger.error(f"❌ Batch job {batch_job_id[:8]}... not found - may have been deleted")
+                    # Remove from queue since it no longer exists
+                    completed_job_ids.append(batch_job_id)
+                else:
+                    logger.error(f"❌ API error checking batch job {batch_job_id[:8]}...: {str(e)}")
+                
+                # If too many API errors, stop checking and try again later
+                if api_errors > max_api_errors:
+                    logger.warning(f"⚠️  Too many API errors ({api_errors}/{len(self.active_batch_queue)}) - "
+                                 f"stopping status check to avoid overwhelming API")
+                    break
+        
+        # Move completed jobs out of active queue
+        slots_freed = 0
+        for batch_job_id in completed_job_ids:
+            if batch_job_id in self.active_batch_queue:
+                self.active_batch_queue.remove(batch_job_id)
+                self.completed_batches.append(batch_job_id)
+                slots_freed += 1
+        
+        if slots_freed > 0:
+            logger.info(f"🔓 Freed up {slots_freed} queue slots ({len(self.active_batch_queue)}/{self.max_active_batches} active)")
+        
+        # Log API error summary if any occurred
+        if api_errors > 0:
+            logger.info(f"📊 Status check completed with {api_errors} API errors (transient issues)")
+            
+        return slots_freed
+    
+    def _submit_pending_batches(self, checkpoint_dir: str) -> int:
+        """
+        Submit pending batches to fill available queue slots.
+        
+        Args:
+            checkpoint_dir: Directory for saving batch files
+            
+        Returns:
+            Number of new batches submitted
+        """
+        available_slots = self.max_active_batches - len(self.active_batch_queue)
+        if available_slots <= 0 or not self.pending_batches:
+            return 0
+        
+        submitted_count = 0
+        batches_to_submit = min(available_slots, len(self.pending_batches))
+        
+        logger.info(f"📤 Submitting {batches_to_submit} pending batches to fill {available_slots} available slots")
+        
+        for _ in range(batches_to_submit):
+            if not self.pending_batches:
+                break
+                
+            batch_data, batch_idx = self.pending_batches.pop(0)
+            batch_job_id = self._submit_single_batch(batch_data, batch_idx, checkpoint_dir)
+            
+            if batch_job_id:
+                self.active_batch_queue.append(batch_job_id)
+                submitted_count += 1
+                logger.info(f"📋 Added batch {batch_job_id[:8]}... to active queue "
+                           f"({len(self.active_batch_queue)}/{self.max_active_batches})")
+            else:
+                # If submission failed, put the batch back at the front
+                self.pending_batches.insert(0, (batch_data, batch_idx))
+                logger.warning(f"⚠️  Failed to submit batch {batch_idx + 1}, will retry later")
+                break  # Stop trying if quota issues
+        
+        return submitted_count
+    
+    def create_batch_jobs_with_automated_queue(self, string_dict: Dict[str, str], 
+                                             field_hash_mapping: Dict[str, Dict[str, int]],
+                                             string_counts: Dict[str, int], 
+                                             checkpoint_dir: str) -> Dict[str, Any]:
+        """
+        Create and manage batch jobs using an automated queue system.
+        Maintains 16 active batches, automatically submitting new ones as slots free up.
+        
+        Args:
+            string_dict: Dictionary mapping hash to string value
+            field_hash_mapping: Mapping of hash to field types
+            string_counts: Mapping of hash to frequency count
+            checkpoint_dir: Directory for saving checkpoints
+            
+        Returns:
+            Dictionary with job creation and processing metrics
+        """
+        logger.info("🚀 Starting automated batch queue management")
+        logger.info(f"🔧 Configuration: Max active batches: {self.max_active_batches}")
+        logger.info(f"🔧 Configuration: Poll interval: {self.queue_poll_interval / 60:.0f} minutes")
+        logger.info(f"🔧 Configuration: Conservative request limit: {self.request_quota_limit:,}")
+        start_time = time.time()
+        
+        # Load checkpoint
+        self.load_checkpoint(checkpoint_dir)
+        
+        # Select strings to process
+        strings_to_process = self._select_strings_to_process(
+            string_dict, field_hash_mapping, string_counts
+        )
+        
+        if not strings_to_process:
+            logger.info("No new strings to process")
+            return {
+                'status': 'no_work',
+                'message': 'All eligible strings already processed',
+                'elapsed_time': time.time() - start_time
+            }
+        
+        # Split into batches
+        all_batches = []
+        for i in range(0, len(strings_to_process), self.max_requests_per_file):
+            batch = strings_to_process[i:i+self.max_requests_per_file]
+            all_batches.append(batch)
+        
+        logger.info(f"📊 Split {len(strings_to_process)} requests into {len(all_batches)} batch files")
+        
+        # Initialize pending batches (if not resuming)
+        if not self.pending_batches and not self.active_batch_queue:
+            # Starting fresh - add all batches to pending queue
+            self.pending_batches = [(batch, idx) for idx, batch in enumerate(all_batches)]
+            logger.info(f"📋 Added {len(self.pending_batches)} batches to pending queue")
+        elif self.pending_batches or self.active_batch_queue:
+            # Resuming from checkpoint
+            logger.info(f"🔄 Resuming: {len(self.active_batch_queue)} active, "
+                       f"{len(self.pending_batches)} pending, {len(self.completed_batches)} completed")
+        
+        # Fill initial queue
+        initial_submitted = self._submit_pending_batches(checkpoint_dir)
+        if initial_submitted > 0:
+            logger.info(f"🚀 Initial submission: {initial_submitted} batches added to queue")
+        
+        # Save checkpoint after initial submission
+        self.save_checkpoint(checkpoint_dir)
+        
+        # Main processing loop
+        total_cycles = 0
+        last_status_time = time.time()
+        
+        logger.info(f"🔄 Starting automated queue processing...")
+        logger.info(f"📊 Queue status: {len(self.active_batch_queue)} active, "
+                   f"{len(self.pending_batches)} pending, {len(self.completed_batches)} completed")
+        
+        consecutive_errors = 0
+        max_consecutive_errors = 3  # Allow up to 3 consecutive cycles with errors
+        
+        try:
+            while self.active_batch_queue or self.pending_batches:
+                total_cycles += 1
+                cycle_had_errors = False
+                
+                try:
+                    # Check and update queue status
+                    slots_freed = self._check_and_update_queue_status()
+                    
+                    # Submit new batches to fill freed slots
+                    if slots_freed > 0 or (self.pending_batches and len(self.active_batch_queue) < self.max_active_batches):
+                        submitted = self._submit_pending_batches(checkpoint_dir)
+                        if submitted > 0:
+                            logger.info(f"📤 Submitted {submitted} new batches to queue")
+                    
+                    # Save checkpoint after any changes
+                    self.save_checkpoint(checkpoint_dir)
+                    
+                    # Reset error counter on successful cycle
+                    consecutive_errors = 0
+                    
+                except Exception as cycle_error:
+                    cycle_had_errors = True
+                    consecutive_errors += 1
+                    logger.error(f"❌ Error in processing cycle {total_cycles}: {str(cycle_error)}")
+                    
+                    # If too many consecutive errors, add longer delay
+                    if consecutive_errors >= max_consecutive_errors:
+                        extended_wait = min(self.queue_poll_interval * 2, 3600)  # Max 1 hour
+                        logger.warning(f"⚠️  {consecutive_errors} consecutive errors - "
+                                     f"extending wait to {extended_wait / 60:.0f} minutes")
+                        time.sleep(extended_wait)
+                        consecutive_errors = 0  # Reset after extended wait
+                    else:
+                        # Short delay before retrying
+                        time.sleep(60)  # 1 minute
+                
+                # Status update every 5 minutes or when significant changes occur
+                current_time = time.time()
+                if (current_time - last_status_time >= 300 or slots_freed > 0 or 
+                    cycle_had_errors or total_cycles == 1):  # 5 minutes or significant events
+                    status_msg = f"📊 Cycle {total_cycles}: Queue status: " \
+                               f"{len(self.active_batch_queue)} active, " \
+                               f"{len(self.pending_batches)} pending, " \
+                               f"{len(self.completed_batches)} completed"
+                    
+                    if cycle_had_errors:
+                        status_msg += f" (cycle had errors: {consecutive_errors}/{max_consecutive_errors})"
+                    
+                    logger.info(status_msg)
+                    last_status_time = current_time
+                
+                # Exit condition: all batches completed
+                if not self.active_batch_queue and not self.pending_batches:
+                    logger.info(f"🎉 All batches completed!")
+                    break
+                
+                # Wait before next poll (30 minutes by default)
+                if self.active_batch_queue and not cycle_had_errors:  # Only wait if there are active batches and no errors
+                    logger.info(f"⏳ Waiting {self.queue_poll_interval / 60:.0f} minutes before next status check...")
+                    time.sleep(self.queue_poll_interval)
+                elif not self.active_batch_queue and self.pending_batches:
+                    # If no active batches but pending ones, shorter wait (may be quota issue)
+                    short_wait = min(self.queue_poll_interval // 4, 900)  # 15 minutes max
+                    logger.info(f"⏳ No active batches but pending work - waiting {short_wait / 60:.0f} minutes before retry...")
+                    time.sleep(short_wait)
+                
+        except KeyboardInterrupt:
+            logger.info(f"🛑 Process interrupted by user")
+            logger.info(f"📊 Current state: {len(self.active_batch_queue)} active, "
+                       f"{len(self.pending_batches)} pending, {len(self.completed_batches)} completed")
+            self.save_checkpoint(checkpoint_dir)
+            return {
+                'status': 'interrupted',
+                'active_batches': len(self.active_batch_queue),
+                'pending_batches': len(self.pending_batches),
+                'completed_batches': len(self.completed_batches),
+                'elapsed_time': time.time() - start_time,
+                'message': 'Process interrupted. State saved, can be resumed.'
+            }
+        except Exception as e:
+            logger.error(f"❌ Error in automated queue processing: {str(e)}")
+            self.save_checkpoint(checkpoint_dir)
+            raise
+        
+        elapsed_time = time.time() - start_time
+        
+        logger.info(f"✅ Automated queue processing completed in {elapsed_time / 60:.1f} minutes")
+        logger.info(f"📊 Final stats: {len(self.completed_batches)} batches completed")
+        logger.info(f"📋 Total processing cycles: {total_cycles}")
+        logger.info(f"💰 Estimated cost savings: ${len(strings_to_process) * 0.00001 * 0.5:.4f}")
+        
+        return {
+            'status': 'completed',
+            'total_batches': len(all_batches),
+            'completed_batches': len(self.completed_batches),
+            'total_requests': len(strings_to_process),
+            'processing_cycles': total_cycles,
+            'estimated_cost_savings': len(strings_to_process) * 0.00001 * 0.5,
+            'elapsed_time': elapsed_time,
+            'message': f'Automated queue completed {len(self.completed_batches)} batches in {total_cycles} cycles.'
+        }
     
     def _recover_batch_jobs_from_api_readonly(self) -> None:
         """
@@ -1191,13 +1619,17 @@ class BatchEmbeddingPipeline:
         total_estimated_tokens = usage['estimated_active_tokens'] + estimated_new_tokens
         total_estimated_requests = usage['total_active_requests'] + new_request_count
         
-        # Apply safety margins
+        # Apply safety margins - be extra conservative
         safe_token_limit = int(self.token_quota_limit * (1 - self.quota_safety_margin))
         safe_request_limit = int(self.request_quota_limit * (1 - self.quota_safety_margin))
         
-        # Check if we're within all limits
-        within_token_quota = total_estimated_tokens <= safe_token_limit
-        within_request_quota = total_estimated_requests <= safe_request_limit
+        # Additional conservative buffer: ensure we're not too close to limits
+        conservative_buffer = 50_000  # Extra 50K request buffer
+        safe_request_limit = min(safe_request_limit, self.request_quota_limit - conservative_buffer)
+        
+        # Check if we're within all limits - use strict comparison (< instead of <=)
+        within_token_quota = total_estimated_tokens < safe_token_limit
+        within_request_quota = total_estimated_requests < safe_request_limit
         within_job_limit = usage['active_jobs'] < self.max_concurrent_jobs
         
         # Ensure individual request batch doesn't exceed per-job limit
@@ -1239,6 +1671,7 @@ class BatchEmbeddingPipeline:
                    f"{usage['estimated_active_tokens']:,} active tokens, {usage['total_active_requests']:,} active requests, "
                    f"{total_estimated_tokens:,}/{safe_token_limit:,} total tokens, "
                    f"{total_estimated_requests:,}/{safe_request_limit:,} total requests "
+                   f"(conservative limit: {safe_request_limit:,}/{self.request_quota_limit:,}) "
                    f"(can_submit: {can_submit})")
         
         return result
@@ -1257,7 +1690,10 @@ class BatchEmbeddingPipeline:
         Returns:
             Dictionary with job creation metrics
         """
-        logger.info("Creating batch jobs for manual polling")
+        logger.info("Creating batch jobs for manual polling (without automated queue)")
+        logger.info(f"🔧 Configuration: Conservative request limit: {self.request_quota_limit:,} (80% of 1M)")
+        logger.info(f"🔧 Configuration: Max jobs per batch: {self.max_active_batches} (will pause after this many)")
+        logger.info(f"🔧 Configuration: Safety margin: {self.quota_safety_margin:.1%}")
         start_time = time.time()
         
         # Load checkpoint
@@ -1285,6 +1721,7 @@ class BatchEmbeddingPipeline:
         logger.info(f"Split {len(strings_to_process)} requests into {len(batches)} batch files")
         
         jobs_created = 0
+        jobs_created_this_session = 0  # Track jobs created in this session
         
         # Create each batch job
         for batch_idx, batch in enumerate(batches):
@@ -1372,10 +1809,32 @@ class BatchEmbeddingPipeline:
                 }
                 
                 jobs_created += 1
+                jobs_created_this_session += 1
                 logger.info(f"Created batch job {batch_job_id} for batch {batch_idx + 1}")
                 
                 # Save checkpoint after each job creation
                 self.save_checkpoint(checkpoint_dir)
+                
+                # Check if we've reached the batch limit for this session
+                if jobs_created_this_session >= self.max_active_batches:
+                    logger.info(f"🛑 Reached batch limit of {self.max_active_batches} jobs created in this session")
+                    logger.info(f"📊 Progress: {batch_idx + 1}/{len(batches)} batches processed")
+                    logger.info(f"💡 Created {jobs_created_this_session} jobs, pausing for manual resumption")
+                    logger.info(f"📋 Run the same command again to continue creating the remaining {len(batches) - (batch_idx + 1)} batches")
+                    
+                    elapsed_time = time.time() - start_time
+                    return {
+                        'status': 'batch_limit_reached',
+                        'jobs_created': jobs_created,
+                        'jobs_created_this_session': jobs_created_this_session,
+                        'batches_processed': batch_idx + 1,
+                        'total_batches': len(batches),
+                        'total_requests': sum(len(b) for b in batches[:batch_idx + 1]),
+                        'remaining_requests': sum(len(b) for b in batches[batch_idx + 1:]),
+                        'estimated_cost_savings': sum(len(b) for b in batches[:batch_idx + 1]) * 0.00001 * 0.5,
+                        'elapsed_time': elapsed_time,
+                        'message': f'Created {jobs_created_this_session} batch jobs then paused due to batch limit. Re-run to continue with remaining {len(batches) - (batch_idx + 1)} batches.'
+                    }
                 
             except Exception as e:
                 logger.error(f"Error creating batch job for batch {batch_idx}: {str(e)}")
@@ -1388,13 +1847,18 @@ class BatchEmbeddingPipeline:
         logger.info(f"⏰ Check job status manually using: python batch_manager.py --status")
         logger.info(f"📥 Download results when ready using: python batch_manager.py --download")
         
+        # If we completed all batches without hitting the job limit
+        if jobs_created_this_session < self.max_active_batches:
+            logger.info(f"🎉 All {len(batches)} batches completed in this session")
+        
         return {
             'status': 'jobs_created',
             'jobs_created': jobs_created,
+            'jobs_created_this_session': jobs_created_this_session,
             'total_requests': len(strings_to_process),
             'estimated_cost_savings': len(strings_to_process) * 0.00001 * 0.5,  # Rough estimate
             'elapsed_time': elapsed_time,
-            'message': f'Created {jobs_created} batch jobs. Use --batch-status to check progress.'
+            'message': f'Created {jobs_created} batch jobs ({jobs_created_this_session} this session). Use --batch-status to check progress.'
         }
     
     def check_batch_status(self, checkpoint_dir: str) -> Dict[str, Any]:
@@ -1555,6 +2019,25 @@ class BatchEmbeddingPipeline:
         for status_key, label, count in status_display:
             if count > 0:
                 logger.info(f"   {label}: {count}")
+        
+        # Show current status vs new conservative limits
+        if total_jobs > 0:
+            active_count = (status_counts[BatchJobStatus.PENDING] + 
+                          status_counts[BatchJobStatus.VALIDATING] + 
+                          status_counts[BatchJobStatus.IN_PROGRESS] + 
+                          status_counts[BatchJobStatus.FINALIZING])
+            
+            logger.info(f"")
+            logger.info(f"🔍 GRANULAR STATUS BREAKDOWN:")
+            logger.info(f"   🔄 In Progress: {active_count}")
+            logger.info(f"   ❌ Failed: {status_counts[BatchJobStatus.FAILED]}")
+            
+            if active_count > 0:
+                logger.info(f"")
+                logger.info(f"⏳ Jobs are still processing. Check again later.")
+            elif completed_count == total_jobs:
+                logger.info(f"")
+                logger.info(f"✅ All jobs completed! Ready to download and process results.")
         
         return {
             'status': 'checked',
@@ -1725,11 +2208,15 @@ class BatchEmbeddingPipeline:
             Dictionary with metrics about the process
         """
         logger.info("Starting batch embedding and indexing process")
+        logger.info(f"🔧 Config flags: manual_polling={self.manual_polling}, use_automated_queue={self.use_automated_queue}")
         start_time = time.time()
         
-        # Check if manual polling is enabled
-        if self.manual_polling:
-            logger.info("Manual polling mode enabled - creating jobs without waiting")
+        # Check if manual polling and automated queue are enabled
+        if self.manual_polling and self.use_automated_queue:
+            logger.info("✅ Manual polling mode with automated queue management enabled")
+            return self.create_batch_jobs_with_automated_queue(string_dict, field_hash_mapping, string_counts, checkpoint_dir)
+        elif self.manual_polling:
+            logger.info("⚠️  Manual polling mode enabled - creating jobs without automated queue")
             return self.create_batch_jobs_only(string_dict, field_hash_mapping, string_counts, checkpoint_dir)
         
         # Continue with automatic polling (original behavior)

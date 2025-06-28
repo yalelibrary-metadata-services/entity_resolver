@@ -87,6 +87,12 @@ batch_manual_polling: true  # Set to true for manual polling, false for automati
 batch_poll_interval: 300  # Seconds between status polls when auto-polling (5 minutes)
 batch_max_wait_time: 86400  # Maximum wait time for batch completion (24 hours)
 
+# Automated Queue Management Configuration
+use_automated_queue: true           # Enable automated 16-batch queue system
+max_active_batches: 16              # Maximum concurrent batches (default: 16)  
+queue_poll_interval: 1800           # 30 minutes between status checks (default: 1800)
+request_quota_limit: 800000         # Conservative 800K request limit (80% of 1M)
+
 # Weaviate Configuration - Environment-specific
 
 # Local Development Weaviate Settings
