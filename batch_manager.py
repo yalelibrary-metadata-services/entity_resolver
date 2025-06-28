@@ -756,6 +756,65 @@ def reset_embedding_stage_selective(config: Dict[str, Any]) -> None:
     print("🗑️  Resetting embedding_and_indexing stage (preserving tracking data)...")
     _reset_embedding_stage_internal(config, preserve_tracking=True)
 
+def _save_processed_files_blacklist(config: Dict[str, Any], checkpoint_dir: str) -> int:
+    """
+    Save a blacklist of all batch job IDs that have been processed to avoid reprocessing them.
+    This is used during reset to ignore previous attempts with flawed source data.
+    """
+    try:
+        from src.embedding_and_indexing_batch import BatchEmbeddingPipeline
+        pipeline = BatchEmbeddingPipeline(config)
+        
+        blacklisted_jobs = set()
+        after = None
+        total_jobs_scanned = 0
+        
+        # Scan ALL batch jobs (any status) to build blacklist
+        while True:
+            if after:
+                batches = pipeline.openai_client.batches.list(limit=100, after=after)
+            else:
+                batches = pipeline.openai_client.batches.list(limit=100)
+            
+            total_jobs_scanned += len(batches.data)
+            
+            for batch in batches.data:
+                # Check if this is an embedding batch job from our pipeline
+                metadata = getattr(batch, 'metadata', {})
+                endpoint = getattr(batch, 'endpoint', '')
+                
+                if (('/embeddings' in endpoint or endpoint == '/v1/embeddings') and
+                    metadata and metadata.get('created_by') == 'embedding_and_indexing_batch'):
+                    
+                    # Add batch job ID to blacklist regardless of status
+                    blacklisted_jobs.add(batch.id)
+            
+            if not batches.has_more:
+                break
+                
+            if batches.data:
+                after = batches.data[-1].id
+            else:
+                break
+        
+        pipeline.close()
+        
+        # Save blacklist to checkpoint
+        if blacklisted_jobs:
+            blacklist_path = os.path.join(checkpoint_dir, 'batch_blacklisted_files.pkl')
+            import pickle
+            with open(blacklist_path, 'wb') as f:
+                pickle.dump(list(blacklisted_jobs), f)
+        
+        print(f"   📊 Scanned {total_jobs_scanned} total batch jobs from OpenAI")
+        print(f"   🚫 Blacklisted {len(blacklisted_jobs)} batch job IDs to avoid reprocessing")
+        
+        return len(blacklisted_jobs)
+        
+    except Exception as e:
+        print(f"   ❌ Error creating blacklist: {e}")
+        return 0
+
 def _reset_embedding_stage_internal(config: Dict[str, Any], preserve_tracking: bool = False) -> None:
     """Internal function to reset embedding stage with optional tracking preservation."""
     
@@ -764,9 +823,20 @@ def _reset_embedding_stage_internal(config: Dict[str, Any], preserve_tracking: b
     files_deleted = []
     files_preserved = []
     weaviate_collection_deleted = False
+    blacklisted_count = 0
     
     try:
-        # First, try to delete the Weaviate collection
+        # FIRST: Create blacklist of all processed files to avoid reprocessing
+        print("🚫 Creating blacklist of processed files to avoid reprocessing...")
+        blacklisted_count = _save_processed_files_blacklist(config, checkpoint_dir)
+        
+        if blacklisted_count > 0:
+            print(f"   ✅ Created blacklist with {blacklisted_count} files")
+            print(f"   📋 Future processing will skip these files completely")
+        else:
+            print(f"   ℹ️  No files found to blacklist")
+        
+        # Second, try to delete the Weaviate collection
         print("🗄️  Dropping EntityString collection from Weaviate...")
         pipeline = None
         try:
@@ -838,6 +908,8 @@ def _reset_embedding_stage_internal(config: Dict[str, Any], preserve_tracking: b
         
         # Summary
         print(f"\n🎉 Reset Summary:")
+        if blacklisted_count > 0:
+            print(f"   🚫 Blacklisted {blacklisted_count} processed files (will be ignored in future runs)")
         if weaviate_collection_deleted:
             print(f"   🗄️  Dropped EntityString collection from Weaviate")
         if files_deleted:

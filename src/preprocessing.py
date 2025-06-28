@@ -66,7 +66,7 @@ def process_file(file_path: str) -> Dict[str, Any]:
         df = pd.read_csv(file_path, na_values='', keep_default_na=False)
         
         # Make sure all expected fields are present
-        required_fields = ['composite', 'marcKey', 'person', 'roles', 'title', 'provision', 'subjects', 'personId']
+        required_fields = ['composite', 'marcKey', 'person', 'roles', 'title', 'provision', 'subjects', 'genres', 'attribution', 'personId']
         missing_fields = [field for field in required_fields if field not in df.columns]
         
         if missing_fields:
@@ -168,7 +168,7 @@ def create_string_dict(string_counts: Dict[str, int], field_hash_mapping: Dict[s
             df = pd.read_csv(csv_file, na_values='', keep_default_na=False)
             
             # Make sure all expected fields are present
-            required_fields = ['composite', 'marcKey', 'person', 'roles', 'title', 'provision', 'subjects', 'personId']
+            required_fields = ['composite', 'marcKey', 'person', 'roles', 'title', 'provision', 'subjects', 'genres', 'personId']
             for field in required_fields:
                 if field == 'personId':  # Skip personId - not a string we want to record
                     continue
@@ -375,6 +375,7 @@ class OptimizedPreprocessor:
                     title_hash TEXT,
                     provision_hash TEXT,
                     subjects_hash TEXT,
+                    genres_hash TEXT,
                     marcKey_hash TEXT
                 )
             """)
@@ -453,8 +454,8 @@ class OptimizedPreprocessor:
                 if all_entities:
                     conn.executemany("""
                         INSERT OR REPLACE INTO entity_hashes 
-                        (person_id, composite_hash, person_hash, roles_hash, title_hash, provision_hash, subjects_hash, marcKey_hash)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        (person_id, composite_hash, person_hash, roles_hash, title_hash, provision_hash, subjects_hash, genres_hash, marcKey_hash)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, all_entities)
                 
                 if all_strings:
@@ -496,7 +497,7 @@ class OptimizedPreprocessor:
             df = pd.read_csv(file_path, na_values='', keep_default_na=False)
             
             # Expected fields
-            required_fields = ['composite', 'marcKey', 'person', 'roles', 'title', 'provision', 'subjects', 'personId']
+            required_fields = ['composite', 'marcKey', 'person', 'roles', 'title', 'provision', 'subjects', 'genres', 'personId']
             
             # Fill missing fields
             for field in required_fields:
@@ -578,7 +579,7 @@ class OptimizedPreprocessor:
         df = pd.read_csv(file_path, na_values='', keep_default_na=False)
         
         # Expected fields
-        required_fields = ['composite', 'marcKey', 'person', 'roles', 'title', 'provision', 'subjects', 'personId']
+        required_fields = ['composite', 'marcKey', 'person', 'roles', 'title', 'provision', 'subjects', 'genres', 'personId']
         
         # Fill missing fields
         for field in required_fields:
@@ -640,8 +641,8 @@ class OptimizedPreprocessor:
             # Insert entities
             conn.executemany("""
                 INSERT OR REPLACE INTO entity_hashes 
-                (person_id, composite_hash, person_hash, roles_hash, title_hash, provision_hash, subjects_hash, marcKey_hash)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (person_id, composite_hash, person_hash, roles_hash, title_hash, provision_hash, subjects_hash, genres_hash, marcKey_hash)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, entity_records)
             
             # Bulk insert strings
@@ -715,7 +716,7 @@ class OptimizedPreprocessor:
             # Export entity hashes
             cursor = conn.execute("""
                 SELECT person_id, composite_hash, person_hash, roles_hash, 
-                       title_hash, provision_hash, subjects_hash, marcKey_hash
+                       title_hash, provision_hash, subjects_hash, genres_hash, marcKey_hash
                 FROM entity_hashes
             """)
             
@@ -728,6 +729,7 @@ class OptimizedPreprocessor:
                     'title': row['title_hash'],
                     'provision': row['provision_hash'],
                     'subjects': row['subjects_hash'],
+                    'genres': row['genres_hash'],
                     'marcKey': row['marcKey_hash']
                 }
             
@@ -923,7 +925,7 @@ def _process_file_optimized(file_path: str) -> Optional[Dict[str, Any]]:
         )
         
         # Expected fields
-        required_fields = ['composite', 'marcKey', 'person', 'roles', 'title', 'provision', 'subjects', 'personId']
+        required_fields = ['composite', 'marcKey', 'person', 'roles', 'title', 'provision', 'subjects', 'genres', 'personId']
         
         # Add missing columns efficiently
         missing_cols = set(required_fields) - set(df.columns)
@@ -1014,7 +1016,7 @@ def _process_file_simple(file_path: str) -> Optional[Dict[str, Any]]:
         )
         
         # Expected fields
-        required_fields = ['composite', 'marcKey', 'person', 'roles', 'title', 'provision', 'subjects', 'personId']
+        required_fields = ['composite', 'marcKey', 'person', 'roles', 'title', 'provision', 'subjects', 'genres', 'personId']
         field_indices = {field: i for i, field in enumerate(required_fields) if field != 'personId'}
         
         # Add missing columns with empty strings
