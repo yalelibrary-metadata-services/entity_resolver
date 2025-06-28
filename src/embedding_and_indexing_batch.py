@@ -24,6 +24,8 @@ from weaviate.util import generate_uuid5
 from openai import OpenAI
 from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
 
+logger = logging.getLogger(__name__)
+
 # Import tiktoken for accurate token counting
 try:
     import tiktoken
@@ -31,8 +33,6 @@ try:
 except ImportError:
     TIKTOKEN_AVAILABLE = False
     logger.warning("tiktoken not available - using fallback token estimation")
-
-logger = logging.getLogger(__name__)
 
 class BatchJobStatus:
     """Enum-like class for batch job statuses."""
