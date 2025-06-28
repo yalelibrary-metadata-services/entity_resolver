@@ -48,6 +48,7 @@ class BatchJobStatus:
     VALIDATING = "validating"
     IN_PROGRESS = "in_progress"
     FINALIZING = "finalizing"
+    CANCELLING = "cancelling"
     COMPLETED = "completed"
     FAILED = "failed"
     EXPIRED = "expired"
@@ -2417,6 +2418,7 @@ class BatchEmbeddingPipeline:
             BatchJobStatus.VALIDATING: 0, 
             BatchJobStatus.IN_PROGRESS: 0,
             BatchJobStatus.FINALIZING: 0,
+            BatchJobStatus.CANCELLING: 0,
             BatchJobStatus.COMPLETED: 0,
             BatchJobStatus.FAILED: 0,
             BatchJobStatus.EXPIRED: 0,
@@ -2541,8 +2543,26 @@ class BatchEmbeddingPipeline:
             
             logger.info(f"")
             logger.info(f"🔍 GRANULAR STATUS BREAKDOWN:")
-            logger.info(f"   🔄 In Progress: {active_count}")
-            logger.info(f"   ❌ Failed: {status_counts[BatchJobStatus.FAILED]}")
+            
+            # Define status display order and emojis
+            status_display = [
+                (BatchJobStatus.PENDING, "⏳ Pending"),
+                (BatchJobStatus.VALIDATING, "🔍 Validating"), 
+                (BatchJobStatus.IN_PROGRESS, "🔄 In Progress"),
+                (BatchJobStatus.FINALIZING, "🏁 Finalizing"),
+                (BatchJobStatus.CANCELLING, "🛑 Cancelling"),
+                (BatchJobStatus.COMPLETED, "✅ Completed"),
+                (BatchJobStatus.FAILED, "❌ Failed"),
+                (BatchJobStatus.EXPIRED, "⏰ Expired"),
+                (BatchJobStatus.CANCELLED, "🚫 Cancelled"),
+                ('error', "⚠️  Error")
+            ]
+            
+            # Show each status if count > 0
+            for status_key, label in status_display:
+                count = status_counts.get(status_key, 0)
+                if count > 0:
+                    logger.info(f"   {label}: {count}")
             
             if active_count > 0:
                 logger.info(f"")

@@ -164,9 +164,10 @@ Pre-pipeline data preparation uses XQuery extraction from BIBFRAME catalog data:
   - Conservative 800K request limit (80% of OpenAI's 1M) with intelligent safety margins
 - **One-at-a-Time Submission**: Conservative batch submission with real-time verification between each
 - **Intelligent Recovery System**:
-  - Automatic failed job cleanup to free quota space
-  - Quota probe testing when no active batches but pending work exists
-  - Progressive wait strategies based on quota availability
+  - Graceful quota exceeded detection with immediate error recognition
+  - 32-hour polling system: checks every 30 minutes for quota recovery
+  - Automatic position preservation and resumption from exact failure point
+  - Progressive wait strategies based on natural job completion (no manual cleanup needed)
 - **Real-time Verification**: 
   - Immediate batch status validation after each submission
   - Pre-submission quota checks (stops at 95% usage)
@@ -507,7 +508,8 @@ curl http://localhost:8080/v1/.well-known/ready
 - Enable debug logging: Set `log_level: DEBUG` in config
 
 **Automated Queue Troubleshooting**:
-- **Quota Exceeded**: System automatically detects and cleans up failed jobs
+- **Quota Exceeded**: System automatically detects quota limits and enters 32-hour polling mode
+- **Polling Recovery**: Checks every 30 minutes for quota availability, resumes exactly where it left off
 - **Stuck Queue**: Check for process locks in `data/checkpoints/`
 - **Network Issues**: System implements progressive retry with intelligent backoff
 - **Status Monitoring**: Real-time quota and queue state logging every 5 minutes

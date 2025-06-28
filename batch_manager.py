@@ -894,7 +894,8 @@ def _reset_embedding_stage_internal(config: Dict[str, Any], preserve_tracking: b
         
         batch_processing_files = [
             os.path.join(checkpoint_dir, 'batch_processed_hashes.pkl'),
-            os.path.join(checkpoint_dir, 'batch_jobs.pkl')
+            os.path.join(checkpoint_dir, 'batch_jobs.pkl'),
+            os.path.join(checkpoint_dir, 'batch_queue_state.pkl')
         ]
         
         # Delete batch request/result files
