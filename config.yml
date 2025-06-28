@@ -309,3 +309,30 @@ disable_feature_caching: false
 string_cache_size: 100000
 vector_cache_size: 50000
 similarity_cache_size: 200000
+
+# Subject Enhancement Configuration
+# Automated quality improvement and imputation for subject fields using composite field semantic similarity
+
+# Subject Quality Audit Configuration
+subject_quality_audit:
+  enabled: true                      # Enable automatic subject quality audit
+  similarity_threshold: 0.70         # Minimum composite similarity to consider alternatives
+  remediation_threshold: 0.60        # Quality score threshold below which remediation is applied
+  min_alternatives: 3                # Minimum number of alternative subjects required for evaluation
+  max_candidates: 100                # Maximum candidate composites to consider
+  frequency_weight: 0.3              # Weight given to subject frequency in quality scoring
+  similarity_weight: 0.7             # Weight given to vector similarity in quality scoring
+  auto_remediate: true               # Automatically apply high-confidence improvements
+  confidence_threshold: 0.80         # Confidence threshold for automatic remediation
+
+# Subject Imputation Configuration  
+subject_imputation:
+  enabled: true                      # Enable automatic subject imputation for missing values
+  similarity_threshold: 0.65         # Minimum composite similarity to use for imputation candidates
+  confidence_threshold: 0.70         # Confidence threshold for applying imputed subjects
+  min_candidates: 3                  # Minimum number of candidate subjects required for imputation
+  max_candidates: 150                # Maximum candidate composites to consider
+  frequency_weight: 0.3              # Weight given to subject frequency in imputation scoring
+  centroid_weight: 0.7               # Weight given to centroid similarity in imputation scoring
+  use_caching: true                  # Enable caching of imputation results for performance
+  cache_size_limit: 10000            # Maximum number of cached imputation results

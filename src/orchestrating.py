@@ -32,6 +32,9 @@ from src.classifying import EntityClassification
 from src.reporting import generate_report
 from src.custom_features import register_custom_features
 from src.checkpoint_manager import get_checkpoint_manager
+# NEW: Subject enhancement modules
+from src.subject_quality import SubjectQualityAudit
+from src.subject_imputation import SubjectImputation
 
 logger = logging.getLogger(__name__)
 
@@ -60,13 +63,21 @@ class PipelineOrchestrator:
         self.weaviate_querying = None
         self.classifier = None
         
-        # Pipeline stages
+        # Pipeline stages with dynamic enabling based on configuration
+        quality_enabled = self.config.get('subject_quality_audit', {}).get('enabled', True)
+        imputation_enabled = self.config.get('subject_imputation', {}).get('enabled', True)
+        
         self.stages = [
             {'name': 'preprocessing', 'enabled': True, 'func': self._run_preprocessing},
             {'name': 'embedding_and_indexing', 'enabled': True, 'func': self._run_embedding_and_indexing},
             # Keep old stages for backward compatibility but mark as deprecated
             {'name': 'embedding', 'enabled': False, 'func': self._run_embedding, 'deprecated': True},
             {'name': 'indexing', 'enabled': False, 'func': self._run_indexing, 'deprecated': True},
+            # NEW: Subject enhancement stages (conditionally enabled)
+            {'name': 'subject_quality_audit', 'enabled': quality_enabled, 'func': self._run_subject_quality_audit},
+            {'name': 'subject_imputation', 'enabled': imputation_enabled, 'func': self._run_subject_imputation},
+            # NEW: Subject enhancement reporting (conditionally enabled)
+            {'name': 'subject_enhancement_reporting', 'enabled': quality_enabled or imputation_enabled, 'func': self._run_subject_enhancement_reporting},
             {'name': 'training', 'enabled': True, 'func': self._run_training},
             {'name': 'classifying', 'enabled': True, 'func': self._run_classifying},
             {'name': 'reporting', 'enabled': True, 'func': self._run_reporting}
@@ -375,6 +386,145 @@ class PipelineOrchestrator:
                     os.remove(file_path)
                     logger.info(f"Deleted classification file: {file_path}")
             
+        elif stage_name == 'subject_quality_audit':
+            # Delete quality audit reports and reset subject evaluation flags
+            output_dir = self.config.get('output_dir', 'data/output')
+            reports_dir = os.path.join(output_dir, 'reports')
+            
+            # Delete quality audit report files
+            import glob
+            report_pattern = os.path.join(reports_dir, 'subject_quality_audit_*.json')
+            report_files = glob.glob(report_pattern)
+            
+            for file_path in report_files:
+                os.remove(file_path)
+                logger.info(f"Deleted quality audit report: {file_path}")
+            
+            # Reset subject evaluation flags and regenerate composite-subject mapping
+            checkpoint_dir = self.config.get('checkpoint_dir', 'data/checkpoints')
+            hash_lookup_path = os.path.join(checkpoint_dir, 'hash_lookup.pkl')
+            
+            if os.path.exists(hash_lookup_path):
+                try:
+                    hash_lookup = load_hash_lookup(hash_lookup_path)
+                    reset_count = 0
+                    composite_subject_mapping = {}
+                    
+                    for record_id, record_data in hash_lookup.items():
+                        # Reset quality audit flags
+                        if 'subject_evaluated' in record_data:
+                            del record_data['subject_evaluated']
+                            reset_count += 1
+                        if 'subject_remediation_required' in record_data:
+                            del record_data['subject_remediation_required']
+                        if 'alternative_subject_hash' in record_data:
+                            del record_data['alternative_subject_hash']
+                        
+                        # Reset remediated subjects to original values
+                        if 'subject_remediated' in record_data and 'original_subject_hash' in record_data:
+                            record_data['subjects'] = record_data['original_subject_hash']
+                            del record_data['subject_remediated']
+                            del record_data['original_subject_hash']
+                        
+                        # Rebuild composite-subject mapping
+                        composite_hash = record_data.get('composite')
+                        subject_hash = record_data.get('subjects')
+                        if composite_hash and composite_hash != "NULL":
+                            composite_subject_mapping[composite_hash] = (
+                                subject_hash if subject_hash and subject_hash != "NULL" else None
+                            )
+                    
+                    # Save updated hash_lookup and mapping
+                    with open(hash_lookup_path, 'wb') as f:
+                        pickle.dump(hash_lookup, f, protocol=pickle.HIGHEST_PROTOCOL)
+                    
+                    from src.preprocessing import save_composite_subject_mapping
+                    save_composite_subject_mapping(composite_subject_mapping, checkpoint_dir)
+                    
+                    logger.info(f"Reset subject evaluation flags for {reset_count} records")
+                    logger.info(f"Regenerated composite-subject mapping with {len(composite_subject_mapping)} entries")
+                    
+                except Exception as e:
+                    logger.error(f"Error resetting subject evaluation flags: {e}")
+        
+        elif stage_name == 'subject_imputation':
+            # Delete imputation results and reset imputation flags
+            output_dir = self.config.get('output_dir', 'data/output')
+            checkpoint_dir = self.config.get('checkpoint_dir', 'data/checkpoints')
+            
+            # Delete imputation result files
+            import glob
+            result_pattern = os.path.join(output_dir, 'subject_imputation_results_*.json')
+            result_files = glob.glob(result_pattern)
+            
+            for file_path in result_files:
+                os.remove(file_path)
+                logger.info(f"Deleted imputation results: {file_path}")
+            
+            # Delete imputation cache
+            cache_dir = os.path.join(checkpoint_dir, 'cache')
+            cache_path = os.path.join(cache_dir, 'imputation_cache.pkl')
+            
+            if os.path.exists(cache_path):
+                os.remove(cache_path)
+                logger.info(f"Deleted imputation cache: {cache_path}")
+            
+            # Reset imputation flags and regenerate composite-subject mapping
+            hash_lookup_path = os.path.join(checkpoint_dir, 'hash_lookup.pkl')
+            
+            if os.path.exists(hash_lookup_path):
+                try:
+                    hash_lookup = load_hash_lookup(hash_lookup_path)
+                    reset_count = 0
+                    composite_subject_mapping = {}
+                    
+                    for record_id, record_data in hash_lookup.items():
+                        # Reset imputed subjects back to NULL
+                        if record_data.get('imputed_subject', False):
+                            record_data['subjects'] = 'NULL'
+                            del record_data['imputed_subject']
+                            reset_count += 1
+                        
+                        # Remove imputation tracking fields
+                        for field in ['imputation_confidence', 'imputation_alternatives', 'imputation_attempted']:
+                            if field in record_data:
+                                del record_data[field]
+                        
+                        # Rebuild composite-subject mapping
+                        composite_hash = record_data.get('composite')
+                        subject_hash = record_data.get('subjects')
+                        if composite_hash and composite_hash != "NULL":
+                            composite_subject_mapping[composite_hash] = (
+                                subject_hash if subject_hash and subject_hash != "NULL" else None
+                            )
+                    
+                    # Save updated hash_lookup and mapping
+                    with open(hash_lookup_path, 'wb') as f:
+                        pickle.dump(hash_lookup, f, protocol=pickle.HIGHEST_PROTOCOL)
+                    
+                    from src.preprocessing import save_composite_subject_mapping
+                    save_composite_subject_mapping(composite_subject_mapping, checkpoint_dir)
+                    
+                    logger.info(f"Reset imputation for {reset_count} records")
+                    logger.info(f"Regenerated composite-subject mapping with {len(composite_subject_mapping)} entries")
+                    
+                except Exception as e:
+                    logger.error(f"Error resetting imputation flags: {e}")
+        
+        elif stage_name == 'subject_enhancement_reporting':
+            # Delete subject enhancement reports
+            output_dir = self.config.get('output_dir', 'data/output')
+            reports_dir = os.path.join(output_dir, 'reports')
+            
+            # Delete comprehensive subject enhancement reports
+            import glob
+            report_pattern = os.path.join(reports_dir, 'subject_enhancement_comprehensive_report_*.json')
+            report_files = glob.glob(report_pattern)
+            
+            for file_path in report_files:
+                os.remove(file_path)
+                logger.info(f"Deleted subject enhancement report: {file_path}")
+        
         elif stage_name == 'reporting':
             # Delete report files
             output_dir = self.config.get('output_dir', 'data/output')
@@ -617,6 +767,126 @@ class PipelineOrchestrator:
             metrics = classification.classify_entities(entity_ids, self.hash_lookup, self.string_dict)
         
         return metrics
+    
+    def _run_subject_quality_audit(self) -> Dict[str, Any]:
+        """
+        Run the subject quality audit stage.
+        
+        Returns:
+            Dictionary with quality audit metrics
+        """
+        # Check if this stage is enabled in configuration
+        quality_config = self.config.get('subject_quality_audit', {})
+        if not quality_config.get('enabled', True):
+            logger.info("Subject quality audit disabled in configuration")
+            return {'status': 'disabled'}
+        
+        # Initialize required components if not already done
+        if self.hash_lookup is None or self.string_dict is None:
+            self._run_preprocessing()
+        
+        # Use context manager for Weaviate client
+        with WeaviateClientManager(self.config) as client:
+            logger.info("Starting subject quality audit with automatic remediation")
+            
+            # Create quality audit instance
+            quality_audit = SubjectQualityAudit(self.config, client)
+            
+            # Execute audit and automatic remediation
+            results = quality_audit.execute()
+            
+            # Update hash_lookup if remediation occurred
+            if results.get('remediation_results', {}).get('remediated_subjects', 0) > 0:
+                logger.info(f"Quality audit automatically improved {results['remediation_results']['remediated_subjects']} subject assignments")
+                
+                # Reload hash_lookup to get the updated data
+                checkpoint_dir = self.config.get('checkpoint_dir', 'data/checkpoints')
+                hash_lookup_path = os.path.join(checkpoint_dir, 'hash_lookup.pkl')
+                self.hash_lookup = load_hash_lookup(hash_lookup_path)
+        
+        return results
+    
+    def _run_subject_imputation(self) -> Dict[str, Any]:
+        """
+        Run the subject imputation stage.
+        
+        Returns:
+            Dictionary with imputation metrics
+        """
+        # Check if this stage is enabled in configuration
+        imputation_config = self.config.get('subject_imputation', {})
+        if not imputation_config.get('enabled', True):
+            logger.info("Subject imputation disabled in configuration")
+            return {'status': 'disabled'}
+        
+        # Initialize required components if not already done
+        if self.hash_lookup is None or self.string_dict is None:
+            self._run_preprocessing()
+        
+        # Use context manager for Weaviate client
+        with WeaviateClientManager(self.config) as client:
+            logger.info("Starting subject imputation for missing values")
+            
+            # Create imputation instance
+            imputation = SubjectImputation(self.config, client)
+            
+            # Execute imputation
+            results = imputation.execute()
+            
+            # Update hash_lookup if imputation occurred
+            if results.get('high_confidence_imputations', 0) > 0:
+                logger.info(f"Successfully imputed {results['high_confidence_imputations']} missing subjects")
+                
+                # Reload hash_lookup to get the updated data
+                checkpoint_dir = self.config.get('checkpoint_dir', 'data/checkpoints')
+                hash_lookup_path = os.path.join(checkpoint_dir, 'hash_lookup.pkl')
+                self.hash_lookup = load_hash_lookup(hash_lookup_path)
+        
+        return results
+    
+    def _run_subject_enhancement_reporting(self) -> Dict[str, Any]:
+        """
+        Generate comprehensive subject enhancement report.
+        
+        Returns:
+            Dictionary with reporting metrics
+        """
+        # Check if either subject enhancement stage was run
+        quality_enabled = self.config.get('subject_quality_audit', {}).get('enabled', True)
+        imputation_enabled = self.config.get('subject_imputation', {}).get('enabled', True)
+        
+        if not (quality_enabled or imputation_enabled):
+            logger.info("Subject enhancement reporting skipped - no enhancement stages enabled")
+            return {'status': 'skipped', 'reason': 'no_enhancement_stages_enabled'}
+        
+        # Initialize required components if not already done
+        if self.hash_lookup is None or self.string_dict is None:
+            self._run_preprocessing()
+        
+        logger.info("Generating comprehensive subject enhancement report")
+        
+        # Import and run the reporting function
+        from src.reporting import generate_subject_enhancement_report
+        
+        try:
+            results = generate_subject_enhancement_report(
+                self.config, 
+                self.hash_lookup, 
+                self.string_dict
+            )
+            
+            if results['status'] == 'completed':
+                logger.info(f"Subject enhancement report completed: {results['enhanced_records']} records enhanced")
+                logger.info(f"Report saved to: {results['report_path']}")
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error generating subject enhancement report: {e}")
+            return {
+                'status': 'failed',
+                'error': str(e)
+            }
     
     def _run_reporting(self) -> Dict[str, Any]:
         """

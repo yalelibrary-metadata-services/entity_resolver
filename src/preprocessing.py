@@ -23,26 +23,33 @@ from tqdm import tqdm
 import pandas as pd
 import numpy as np
 from collections import defaultdict
-import zlib
+# zlib no longer needed after switching from CRC32 to xxHash
 
 logger = logging.getLogger(__name__)
 
 def hash_string(string_value: str) -> str:
     """
-    Create a deterministic hash for a string value using CRC32 (faster than MD5).
+    Create a deterministic hash for a string value using xxHash3-128 (fastest with lowest collision risk).
     
     Args:
         string_value: String value to hash
         
     Returns:
-        CRC32 hash of the string as hex
+        xxHash3-128 hash of the string as hex
     """
     if not string_value or string_value == 'nan':
         return "NULL"
     
-    # Use CRC32 for faster hashing (2-3x faster than MD5)
-    # Convert to hex and pad to ensure consistent length
-    return format(zlib.crc32(string_value.encode('utf-8')) & 0xffffffff, '08x')
+    # Use xxHash3-128 for optimal speed and collision resistance
+    # 128-bit output provides virtually zero collision probability
+    # Significantly faster than SHA-256 while maintaining excellent collision resistance
+    try:
+        import xxhash
+        return xxhash.xxh3_128(string_value.encode('utf-8')).hexdigest()
+    except ImportError:
+        # Fallback to SHA-256 if xxhash not available
+        import hashlib
+        return hashlib.sha256(string_value.encode('utf-8')).hexdigest()
 
 def process_file(file_path: str) -> Dict[str, Any]:
     """
@@ -235,6 +242,7 @@ def process_data(config: Dict[str, Any], input_dir: str, checkpoint_dir: str, us
     output_data = {}  # personId -> field -> hash
     string_counts = {}  # hash -> count
     field_hash_mapping = {}  # hash -> field -> count
+    composite_subject_mapping = {}  # NEW: composite_hash -> subject_hash mapping
     
     # Get list of input files
     input_files = []
@@ -275,6 +283,16 @@ def process_data(config: Dict[str, Any], input_dir: str, checkpoint_dir: str, us
                     if 'output_data' in result:
                         for person_id, fields in result['output_data'].items():
                             output_data[person_id] = fields
+                            
+                            # Build composite-subject mapping during processing
+                            composite_hash = fields.get('composite')
+                            subject_hash = fields.get('subjects')
+                            
+                            if composite_hash and composite_hash != "NULL":
+                                # Map composite to subject (None if subject is NULL or missing)
+                                composite_subject_mapping[composite_hash] = (
+                                    subject_hash if subject_hash and subject_hash != "NULL" else None
+                                )
                             
                     if 'string_counts' in result:
                         for hash_val, count in result['string_counts'].items():
@@ -318,11 +336,20 @@ def process_data(config: Dict[str, Any], input_dir: str, checkpoint_dir: str, us
     with open(field_hash_mapping_path, 'wb') as f:
         pickle.dump(field_hash_mapping, f)
     
+    # Save composite-subject mapping
+    save_composite_subject_mapping(composite_subject_mapping, checkpoint_dir)
+    
     elapsed_time = time.time() - start_time
     logger.info(f"Preprocessing completed in {elapsed_time:.2f} seconds")
     logger.info(f"Processed {total_rows} total rows")
     logger.info(f"Found {len(output_data)} unique entities")
     logger.info(f"Found {len(string_counts)} unique strings")
+    logger.info(f"Generated {len(composite_subject_mapping)} composite-subject mappings")
+    
+    # Log subject mapping statistics
+    subjects_present = sum(1 for v in composite_subject_mapping.values() if v is not None)
+    subjects_missing = sum(1 for v in composite_subject_mapping.values() if v is None)
+    logger.info(f"Subject mapping: {subjects_present} records have subjects, {subjects_missing} need imputation")
     
     # Return final data structures and metrics
     metrics = {
@@ -332,6 +359,9 @@ def process_data(config: Dict[str, Any], input_dir: str, checkpoint_dir: str, us
         'total_rows': total_rows,
         'entity_count': len(output_data),
         'unique_strings': len(string_counts),
+        'composite_subject_mappings': len(composite_subject_mapping),
+        'subjects_present': subjects_present,
+        'subjects_missing': subjects_missing,
         'file_metrics': file_metrics
     }
     
@@ -711,6 +741,7 @@ class OptimizedPreprocessor:
         output_data = {}
         string_dict = {}
         string_counts = {}
+        composite_subject_mapping = {}
         
         with self._get_connection() as conn:
             # Export entity hashes
@@ -732,6 +763,16 @@ class OptimizedPreprocessor:
                     'genres': row['genres_hash'],
                     'marcKey': row['marcKey_hash']
                 }
+                
+                # Build composite-subject mapping during export
+                composite_hash = row['composite_hash']
+                subject_hash = row['subjects_hash']
+                
+                if composite_hash and composite_hash != "NULL":
+                    # Map composite to subject (None if subject is NULL or missing)
+                    composite_subject_mapping[composite_hash] = (
+                        subject_hash if subject_hash and subject_hash != "NULL" else None
+                    )
             
             # Export string dictionary and counts
             cursor = conn.execute("SELECT hash, original_value, count FROM string_hashes")
@@ -768,7 +809,15 @@ class OptimizedPreprocessor:
         with open(field_hash_mapping_path, 'wb') as f:
             pickle.dump(field_hash_mapping, f, protocol=pickle.HIGHEST_PROTOCOL)
         
+        # Save composite-subject mapping
+        save_composite_subject_mapping(composite_subject_mapping, self.checkpoint_dir)
+        
+        # Log composite-subject mapping statistics
+        subjects_present = sum(1 for v in composite_subject_mapping.values() if v is not None)
+        subjects_missing = sum(1 for v in composite_subject_mapping.values() if v is None)
         logger.info(f"Exported {len(output_data)} entities, {len(string_dict)} unique strings")
+        logger.info(f"Generated {len(composite_subject_mapping)} composite-subject mappings")
+        logger.info(f"Subject mapping: {subjects_present} records have subjects, {subjects_missing} need imputation")
         
         return output_data, string_dict, string_counts
     
@@ -815,6 +864,7 @@ def process_data_optimized(config: Dict[str, Any], input_dir: str, checkpoint_di
     string_dict = {}
     string_counts = defaultdict(int)  # Use defaultdict for cleaner code
     field_hash_mapping = defaultdict(lambda: defaultdict(int))
+    composite_subject_mapping = {}  # NEW: Composite-subject mapping for subject enhancement
     
     # Process files in batches
     total_rows = 0
@@ -859,6 +909,17 @@ def process_data_optimized(config: Dict[str, Any], input_dir: str, checkpoint_di
             # Merge field mappings
             for hash_val, field in result['mappings'].values():
                 field_hash_mapping[hash_val][field] += 1
+            
+            # Build composite-subject mapping during batch processing
+            for person_id, entity_data in result['entities_dict'].items():
+                composite_hash = entity_data.get('composite')
+                subject_hash = entity_data.get('subjects')
+                
+                if composite_hash and composite_hash != "NULL":
+                    # Map composite to subject (None if subject is NULL or missing)
+                    composite_subject_mapping[composite_hash] = (
+                        subject_hash if subject_hash and subject_hash != "NULL" else None
+                    )
         
         batch_elapsed = time.time() - batch_start
         batch_rows = sum(r['rows_processed'] for r in batch_results)
@@ -887,6 +948,9 @@ def process_data_optimized(config: Dict[str, Any], input_dir: str, checkpoint_di
     with open(os.path.join(checkpoint_dir, 'field_hash_mapping.pkl'), 'wb') as f:
         pickle.dump(dict(field_hash_mapping), f, protocol=pickle.HIGHEST_PROTOCOL)
     
+    # Save composite-subject mapping
+    save_composite_subject_mapping(composite_subject_mapping, checkpoint_dir)
+    
     save_elapsed = time.time() - save_start
     logger.info(f"Saved results in {save_elapsed:.2f} seconds")
     
@@ -896,6 +960,12 @@ def process_data_optimized(config: Dict[str, Any], input_dir: str, checkpoint_di
     logger.info(f"Processed {total_rows} total rows ({total_rows/elapsed_time:.0f} rows/sec)")
     logger.info(f"Found {len(output_data)} unique entities")
     logger.info(f"Found {len(string_dict)} unique strings")
+    logger.info(f"Generated {len(composite_subject_mapping)} composite-subject mappings")
+    
+    # Log subject mapping statistics
+    subjects_present = sum(1 for v in composite_subject_mapping.values() if v is not None)
+    subjects_missing = sum(1 for v in composite_subject_mapping.values() if v is None)
+    logger.info(f"Subject mapping: {subjects_present} records have subjects, {subjects_missing} need imputation")
     
     metrics = {
         'status': 'completed',
@@ -904,6 +974,9 @@ def process_data_optimized(config: Dict[str, Any], input_dir: str, checkpoint_di
         'total_rows': total_rows,
         'entity_count': len(output_data),
         'unique_strings': len(string_dict),
+        'composite_subject_mappings': len(composite_subject_mapping),
+        'subjects_present': subjects_present,
+        'subjects_missing': subjects_missing,
         'rows_per_second': total_rows / elapsed_time
     }
     
@@ -1181,6 +1254,48 @@ def load_string_counts(path: str) -> Dict[str, int]:
     except Exception as e:
         logger.error(f"Error loading string counts from {path}: {str(e)}")
         return {}
+
+def load_composite_subject_mapping(path: str) -> Dict[str, Optional[str]]:
+    """
+    Load composite-subject mapping from checkpoint.
+    
+    Args:
+        path: Path to the composite-subject mapping pickle file
+        
+    Returns:
+        Dictionary mapping composite hash to subject hash (or None for missing subjects)
+    """
+    try:
+        with open(path, 'rb') as f:
+            composite_subject_mapping = pickle.load(f)
+        
+        logger.info(f"Loaded composite-subject mapping with {len(composite_subject_mapping)} entries from {path}")
+        return composite_subject_mapping
+        
+    except Exception as e:
+        logger.error(f"Error loading composite-subject mapping from {path}: {str(e)}")
+        return {}
+
+def save_composite_subject_mapping(mapping: Dict[str, Optional[str]], checkpoint_dir: str) -> None:
+    """
+    Save composite-subject mapping to checkpoint.
+    
+    Args:
+        mapping: Dictionary mapping composite hash to subject hash
+        checkpoint_dir: Directory for saving checkpoint
+    """
+    try:
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        mapping_path = os.path.join(checkpoint_dir, 'composite_subject_mapping.pkl')
+        
+        with open(mapping_path, 'wb') as f:
+            pickle.dump(mapping, f, protocol=pickle.HIGHEST_PROTOCOL)
+        
+        logger.info(f"Saved composite-subject mapping with {len(mapping)} entries to {mapping_path}")
+        
+    except Exception as e:
+        logger.error(f"Error saving composite-subject mapping: {str(e)}")
+        raise
 
 def main(config_path: str = 'config.yml'):
     """

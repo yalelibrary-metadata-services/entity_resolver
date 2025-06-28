@@ -2571,3 +2571,289 @@ class FeatureOptimizationReporter:
         logger.info(f"Comprehensive report generated with {len(report_paths)} components")
         
         return report_paths
+
+
+def generate_subject_enhancement_report(config: dict, hash_lookup: dict = None, string_dict: dict = None) -> dict:
+    """
+    Generate comprehensive JSON report for subject quality audit and imputation results.
+    
+    This function creates a detailed report that resolves opaque hashes to human-readable strings,
+    providing insights into the subject enhancement process including quality improvements and
+    missing subject imputations.
+    
+    Args:
+        config: Configuration dictionary
+        hash_lookup: Hash lookup dictionary mapping record IDs to field hashes
+        string_dict: String dictionary mapping hashes to original string values
+        
+    Returns:
+        Dictionary with report generation metrics and file paths
+    """
+    import time
+    import glob
+    from pathlib import Path
+    
+    logger.info("Generating subject enhancement report")
+    start_time = time.time()
+    
+    # Set up directories
+    output_dir = Path(config.get('output_dir', 'data/output'))
+    reports_dir = output_dir / 'reports'
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Load required data if not provided
+    if hash_lookup is None or string_dict is None:
+        from src.preprocessing import load_hash_lookup, load_string_dict
+        checkpoint_dir = config.get('checkpoint_dir', 'data/checkpoints')
+        
+        if hash_lookup is None:
+            hash_lookup_path = Path(checkpoint_dir) / 'hash_lookup.pkl'
+            if hash_lookup_path.exists():
+                hash_lookup = load_hash_lookup(str(hash_lookup_path))
+            else:
+                logger.warning("Hash lookup not found, report will be limited")
+                hash_lookup = {}
+        
+        if string_dict is None:
+            string_dict_path = Path(checkpoint_dir) / 'string_dict.pkl'
+            if string_dict_path.exists():
+                string_dict = load_string_dict(str(string_dict_path))
+            else:
+                logger.warning("String dictionary not found, hashes will not be resolved")
+                string_dict = {}
+    
+    def resolve_hash(hash_value: str) -> str:
+        """Resolve hash to human-readable string with fallback."""
+        if not hash_value or hash_value == "NULL":
+            return None
+        return string_dict.get(hash_value, f"[Hash: {hash_value}]")
+    
+    # Initialize report structure
+    timestamp = time.strftime('%Y%m%d_%H%M%S')
+    report = {
+        'metadata': {
+            'generated_at': timestamp,
+            'generated_by': 'Subject Enhancement Reporting Module',
+            'pipeline_config': {
+                'quality_audit_enabled': config.get('subject_quality_audit', {}).get('enabled', True),
+                'imputation_enabled': config.get('subject_imputation', {}).get('enabled', True),
+                'quality_auto_remediate': config.get('subject_quality_audit', {}).get('auto_remediate', True),
+                'quality_confidence_threshold': config.get('subject_quality_audit', {}).get('confidence_threshold', 0.80),
+                'imputation_confidence_threshold': config.get('subject_imputation', {}).get('confidence_threshold', 0.70)
+            }
+        },
+        'summary': {
+            'total_records': len(hash_lookup),
+            'records_with_subjects': 0,
+            'records_missing_subjects': 0,
+            'quality_evaluated_records': 0,
+            'quality_remediated_records': 0,
+            'imputed_records': 0,
+            'enhancement_coverage': 0.0
+        },
+        'quality_audit': {
+            'enabled': config.get('subject_quality_audit', {}).get('enabled', True),
+            'evaluated_records': [],
+            'remediated_records': [],
+            'statistics': {}
+        },
+        'subject_imputation': {
+            'enabled': config.get('subject_imputation', {}).get('enabled', True),
+            'imputed_records': [],
+            'statistics': {}
+        },
+        'detailed_results': []
+    }
+    
+    # Process hash_lookup to gather enhancement results
+    quality_evaluated = 0
+    quality_remediated = 0
+    imputed_subjects = 0
+    records_with_subjects = 0
+    records_missing_subjects = 0
+    
+    for record_id, record_data in hash_lookup.items():
+        subject_hash = record_data.get('subjects')
+        has_subject = subject_hash and subject_hash != "NULL"
+        
+        if has_subject:
+            records_with_subjects += 1
+        else:
+            records_missing_subjects += 1
+        
+        # Create detailed record entry
+        record_detail = {
+            'record_id': record_id,
+            'composite_field': resolve_hash(record_data.get('composite')),
+            'person_name': resolve_hash(record_data.get('person')),
+            'title': resolve_hash(record_data.get('title')),
+            'current_subject': resolve_hash(subject_hash),
+            'enhancement_history': []
+        }
+        
+        # Check for quality audit results
+        if record_data.get('subject_evaluated', False):
+            quality_evaluated += 1
+            
+            enhancement_entry = {
+                'type': 'quality_audit',
+                'timestamp': timestamp,
+                'remediation_required': record_data.get('subject_remediation_required', False),
+                'confidence': record_data.get('imputation_confidence', 0.0)
+            }
+            
+            if record_data.get('subject_remediated', False):
+                quality_remediated += 1
+                original_subject = resolve_hash(record_data.get('original_subject_hash'))
+                enhancement_entry.update({
+                    'action_taken': 'subject_improved',
+                    'original_subject': original_subject,
+                    'improved_subject': resolve_hash(subject_hash),
+                    'improvement_reason': 'semantic_similarity_analysis'
+                })
+                
+                report['quality_audit']['remediated_records'].append({
+                    'record_id': record_id,
+                    'person_name': record_detail['person_name'],
+                    'original_subject': original_subject,
+                    'improved_subject': record_detail['current_subject'],
+                    'confidence': enhancement_entry['confidence']
+                })
+            else:
+                enhancement_entry['action_taken'] = 'no_improvement_needed'
+            
+            record_detail['enhancement_history'].append(enhancement_entry)
+            
+            if record_data.get('subject_remediation_required', False):
+                report['quality_audit']['evaluated_records'].append({
+                    'record_id': record_id,
+                    'person_name': record_detail['person_name'],
+                    'current_subject': record_detail['current_subject'],
+                    'remediation_required': True,
+                    'alternative_available': bool(record_data.get('alternative_subject_hash'))
+                })
+        
+        # Check for imputation results
+        if record_data.get('imputed_subject', False):
+            imputed_subjects += 1
+            
+            enhancement_entry = {
+                'type': 'subject_imputation',
+                'timestamp': timestamp,
+                'action_taken': 'subject_imputed',
+                'imputed_subject': resolve_hash(subject_hash),
+                'confidence': record_data.get('imputation_confidence', 0.0),
+                'alternative_count': record_data.get('imputation_alternatives', 0),
+                'method': 'composite_field_vector_similarity'
+            }
+            
+            record_detail['enhancement_history'].append(enhancement_entry)
+            
+            report['subject_imputation']['imputed_records'].append({
+                'record_id': record_id,
+                'person_name': record_detail['person_name'],
+                'composite_field': record_detail['composite_field'],
+                'imputed_subject': record_detail['current_subject'],
+                'confidence': enhancement_entry['confidence'],
+                'alternative_count': enhancement_entry['alternative_count']
+            })
+        
+        # Add record to detailed results if it has enhancement history
+        if record_detail['enhancement_history']:
+            report['detailed_results'].append(record_detail)
+    
+    # Update summary statistics
+    report['summary'].update({
+        'records_with_subjects': records_with_subjects,
+        'records_missing_subjects': records_missing_subjects,
+        'quality_evaluated_records': quality_evaluated,
+        'quality_remediated_records': quality_remediated,
+        'imputed_records': imputed_subjects,
+        'enhancement_coverage': (quality_evaluated + imputed_subjects) / max(len(hash_lookup), 1)
+    })
+    
+    # Add quality audit statistics
+    if quality_evaluated > 0:
+        report['quality_audit']['statistics'] = {
+            'total_evaluated': quality_evaluated,
+            'remediation_rate': quality_remediated / quality_evaluated,
+            'records_needing_remediation': len(report['quality_audit']['evaluated_records']),
+            'successful_remediations': quality_remediated
+        }
+    
+    # Add imputation statistics
+    if imputed_subjects > 0:
+        # Calculate average confidence for imputed subjects
+        confidence_scores = [r['confidence'] for r in report['subject_imputation']['imputed_records']]
+        report['subject_imputation']['statistics'] = {
+            'total_imputed': imputed_subjects,
+            'imputation_rate': imputed_subjects / max(records_missing_subjects, 1),
+            'average_confidence': sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0.0,
+            'high_confidence_count': sum(1 for c in confidence_scores if c >= 0.80)
+        }
+    
+    # Load external audit reports if available
+    quality_reports = glob.glob(str(reports_dir / 'subject_quality_audit_*.json'))
+    imputation_reports = glob.glob(str(output_dir / 'subject_imputation_results_*.json'))
+    
+    if quality_reports:
+        # Load the most recent quality audit report
+        latest_quality_report = max(quality_reports, key=os.path.getctime)
+        try:
+            with open(latest_quality_report, 'r') as f:
+                external_quality_data = json.load(f)
+            report['quality_audit']['external_report'] = {
+                'source_file': os.path.basename(latest_quality_report),
+                'statistics': external_quality_data.get('statistics', {}),
+                'configuration': external_quality_data.get('configuration', {})
+            }
+        except Exception as e:
+            logger.warning(f"Could not load external quality report: {e}")
+    
+    if imputation_reports:
+        # Load the most recent imputation report
+        latest_imputation_report = max(imputation_reports, key=os.path.getctime)
+        try:
+            with open(latest_imputation_report, 'r') as f:
+                external_imputation_data = json.load(f)
+            report['subject_imputation']['external_report'] = {
+                'source_file': os.path.basename(latest_imputation_report),
+                'statistics': external_imputation_data.get('statistics', {}),
+                'configuration': external_imputation_data.get('configuration', {})
+            }
+        except Exception as e:
+            logger.warning(f"Could not load external imputation report: {e}")
+    
+    # Save the comprehensive report
+    report_filename = f'subject_enhancement_comprehensive_report_{timestamp}.json'
+    report_path = reports_dir / report_filename
+    
+    try:
+        with open(report_path, 'w') as f:
+            json.dump(report, f, indent=2, ensure_ascii=False)
+        
+        elapsed_time = time.time() - start_time
+        
+        logger.info(f"Subject enhancement report generated in {elapsed_time:.2f} seconds")
+        logger.info(f"Report saved to: {report_path}")
+        logger.info(f"Enhanced {quality_remediated + imputed_subjects} records total")
+        
+        return {
+            'status': 'completed',
+            'report_path': str(report_path),
+            'elapsed_time': elapsed_time,
+            'total_records': len(hash_lookup),
+            'enhanced_records': quality_remediated + imputed_subjects,
+            'quality_evaluated': quality_evaluated,
+            'quality_remediated': quality_remediated,
+            'subjects_imputed': imputed_subjects,
+            'enhancement_coverage': report['summary']['enhancement_coverage']
+        }
+        
+    except Exception as e:
+        logger.error(f"Error saving subject enhancement report: {e}")
+        return {
+            'status': 'failed',
+            'error': str(e),
+            'elapsed_time': time.time() - start_time
+        }
