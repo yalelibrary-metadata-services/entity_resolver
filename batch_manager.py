@@ -753,8 +753,35 @@ def reset_embedding_stage(config: Dict[str, Any]) -> None:
     checkpoint_dir = config.get("checkpoint_dir", "data/checkpoints")
     
     files_deleted = []
+    weaviate_collection_deleted = False
     
     try:
+        # First, try to delete the Weaviate collection
+        print("🗄️  Dropping EntityString collection from Weaviate...")
+        pipeline = None
+        try:
+            pipeline = BatchEmbeddingPipeline(config)
+            
+            # Check if collection exists and delete it
+            try:
+                pipeline.weaviate_client.collections.delete("EntityString")
+                weaviate_collection_deleted = True
+                print("   ✅ Deleted EntityString collection from Weaviate")
+            except Exception as collection_error:
+                if "not found" in str(collection_error).lower() or "does not exist" in str(collection_error).lower():
+                    print("   ℹ️  EntityString collection does not exist in Weaviate")
+                else:
+                    print(f"   ⚠️  Could not delete EntityString collection: {collection_error}")
+                    
+        except Exception as weaviate_error:
+            print(f"   ⚠️  Could not connect to Weaviate: {weaviate_error}")
+        finally:
+            if pipeline and hasattr(pipeline, 'weaviate_client'):
+                try:
+                    pipeline.weaviate_client.close()
+                except:
+                    pass
+        
         # Delete real-time processing checkpoints
         real_time_files = [
             os.path.join(checkpoint_dir, 'processed_hashes.pkl')
@@ -778,18 +805,23 @@ def reset_embedding_stage(config: Dict[str, Any]) -> None:
         all_files = real_time_files + batch_files
         
         # Delete files
+        print("📁 Deleting checkpoint files...")
         for file_path in all_files:
             if os.path.exists(file_path):
                 os.remove(file_path)
                 files_deleted.append(os.path.basename(file_path))
                 print(f"   ✅ Deleted: {os.path.basename(file_path)}")
         
+        # Summary
+        print(f"\n🎉 Reset Summary:")
+        if weaviate_collection_deleted:
+            print(f"   🗄️  Dropped EntityString collection from Weaviate")
         if files_deleted:
-            print(f"\n🎉 Successfully deleted {len(files_deleted)} files:")
+            print(f"   📁 Deleted {len(files_deleted)} checkpoint files:")
             for filename in files_deleted:
-                print(f"   • {filename}")
+                print(f"      • {filename}")
         else:
-            print("ℹ️  No files found to delete - stage already clean")
+            print("   ℹ️  No checkpoint files found to delete")
         
         print(f"\n📋 Embedding stage reset complete. You can now:")
         print(f"   • Run embedding with real-time processing")
