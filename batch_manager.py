@@ -416,8 +416,15 @@ def cancel_uncompleted_jobs(config: Dict[str, Any]) -> None:
         print(f"   Already failed: {len(already_failed)}")
         print(f"   Already cancelled: {len(cancelled_jobs)}")
         
+        if already_failed:
+            print(f"\n💡 Note: {len(already_failed)} failed jobs cannot be cancelled (they're already failed)")
+            print(f"   Failed jobs do NOT consume quota once they've failed")
+            print(f"   They will eventually be cleaned up by OpenAI automatically")
+        
         if not jobs_to_cancel:
             print("ℹ️  No jobs found that can be cancelled")
+            if already_failed:
+                print(f"   The {len(already_failed)} failed jobs shown above cannot be cancelled")
             return
         
         # Confirm cancellation
@@ -452,8 +459,9 @@ def cancel_uncompleted_jobs(config: Dict[str, Any]) -> None:
                 # Cancel the job
                 cancelled_batch = pipeline.openai_client.batches.cancel(job_id)
                 
-                # Update local tracking
-                pipeline.batch_jobs[job_id]['status'] = 'cancelled'
+                # Update local tracking if job exists in our tracking
+                if job_id in pipeline.batch_jobs:
+                    pipeline.batch_jobs[job_id]['status'] = 'cancelled'
                 
                 cancelled_count += 1
                 print(f"   ✅ Cancelled {job_id[:12]}... ({status})")

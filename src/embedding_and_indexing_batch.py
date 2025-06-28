@@ -1749,28 +1749,23 @@ class BatchEmbeddingPipeline:
                     
                     if (('/embeddings' in endpoint or endpoint == '/v1/embeddings') and
                         metadata and metadata.get('created_by') == 'embedding_and_indexing_batch'):
-                        # CRITICAL FIX: Count ALL submitted requests that might consume quota
-                        # OpenAI's 1M request limit apparently includes failed jobs until they're cleaned up
-                        if batch.status in ['pending', 'validating', 'in_progress', 'finalizing', 'failed']:
+                        # Track all jobs for visibility, but only count quota for non-failed jobs
+                        if batch.status in ['pending', 'validating', 'in_progress', 'finalizing', 'failed', 'cancelled', 'completed']:
                             api_batch_statuses[batch.id] = batch.status
                             
-                            # Get request count from OpenAI for accurate tracking
-                            if hasattr(batch, 'request_counts') and batch.request_counts:
-                                request_count = getattr(batch.request_counts, 'total', 0)
-                                total_active_requests += request_count
-                                estimated_active_tokens += request_count * 100  # 100 tokens/request estimate
-                                
-                                # Only count as "active job" if actually processing
-                                if batch.status in ['pending', 'validating', 'in_progress', 'finalizing']:
+                            # Only count quota for jobs that actually consume quota (not failed/cancelled/completed)
+                            if batch.status in ['pending', 'validating', 'in_progress', 'finalizing']:
+                                # Get request count from OpenAI for accurate tracking
+                                if hasattr(batch, 'request_counts') and batch.request_counts:
+                                    request_count = getattr(batch.request_counts, 'total', 0)
+                                    total_active_requests += request_count
+                                    estimated_active_tokens += request_count * 100  # 100 tokens/request estimate
                                     active_jobs += 1
-                            else:
-                                # Fallback: estimate from file size
-                                fallback_requests = self.max_requests_per_file
-                                total_active_requests += fallback_requests
-                                estimated_active_tokens += fallback_requests * 100
-                                
-                                # Only count as "active job" if actually processing
-                                if batch.status in ['pending', 'validating', 'in_progress', 'finalizing']:
+                                else:
+                                    # Fallback: estimate from file size
+                                    fallback_requests = self.max_requests_per_file
+                                    total_active_requests += fallback_requests
+                                    estimated_active_tokens += fallback_requests * 100
                                     active_jobs += 1
                 
                 if not batches.has_more:
@@ -1781,12 +1776,12 @@ class BatchEmbeddingPipeline:
                 else:
                     break
             
-            logger.info(f"Found {active_jobs} active embedding batch jobs using ~{estimated_active_tokens:,} tokens and {total_active_requests:,} requests (includes {len(api_batch_statuses)} total jobs consuming quota)")
+            logger.info(f"Found {active_jobs} active embedding batch jobs using ~{estimated_active_tokens:,} tokens and {total_active_requests:,} requests (tracked {len(api_batch_statuses)} total jobs)")
             
-            # Count failed jobs for better visibility into quota consumption
+            # Count failed jobs for visibility (they don't consume quota but good to track)
             failed_jobs = len([batch_id for batch_id, status in api_batch_statuses.items() if status == 'failed'])
             if failed_jobs > 0:
-                logger.warning(f"⚠️  {failed_jobs} failed embedding jobs are still consuming quota (should be cancelled to free space)")
+                logger.info(f"ℹ️  {failed_jobs} failed embedding jobs found (these do not consume quota)")
             
             return {
                 'active_jobs': active_jobs,
