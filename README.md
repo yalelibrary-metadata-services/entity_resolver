@@ -34,7 +34,7 @@ curl http://localhost:8080/v1/.well-known/ready  # Check readiness
 # Run complete pipeline (real-time embeddings)
 python main.py --config config.yml
 
-# Run with batch embeddings (50% cost savings, automated queue management)
+# Run with fully automated batch embeddings (50% cost savings, zero manual intervention)
 # Set use_batch_embeddings: true and use_automated_queue: true in config.yml
 python main.py --config config.yml
 
@@ -50,8 +50,8 @@ python main.py --start subject_quality --end subject_quality    # Quality audit 
 python main.py --start subject_imputation --end subject_imputation  # Imputation only
 python main.py --start subject_quality --end subject_imputation     # Both enhancement stages
 
-# Automated queue batch processing (runs until completion)
-python main.py --config config.yml  # Starts automated queue management
+# Fully automated batch processing (recommended - runs until completion)
+python batch_manager.py --create  # Starts self-managing automated queue system
 
 # Manual batch operations (if automated queue disabled)
 python main.py --batch-status     # Check batch job status
@@ -156,10 +156,11 @@ Pre-pipeline data preparation uses XQuery extraction from BIBFRAME catalog data:
 - Direct Weaviate indexing with progress tracking
 - Ideal for development and smaller datasets
 
-**Batch Processing** (`src/embedding_and_indexing_batch.py`):
-- **Automated Queue Management**: Maintains 16 active batches, automatically submitting new ones as slots free up
-- **Intelligent Polling**: 30-minute polling cycle with adaptive error handling and retry logic
-- **Conservative Quota Management**: 800K request limit (80% of OpenAI's 1M) with 50K safety buffer
+**Fully Automated Batch Processing** (`src/embedding_and_indexing_batch.py`):
+- **Self-Managing Queue**: Automatically maintains exactly 16 active batches with zero manual intervention
+- **Intelligent Quota Management**: Accurately tracks ALL requests (including failed jobs) toward OpenAI's 1M limit
+- **Real-time Verification**: Immediately validates batch status after submission to catch quota exceeded errors
+- **Automatic Cleanup**: Auto-cancels failed jobs that consume quota space to free resources
 - OpenAI Batch API with 50% cost savings and 24-hour turnaround
 - **State Persistence**: Complete queue recovery from interruptions with checkpoint management
 - **Enhanced Error Handling**: Network timeout categorization, rate limit respect, graceful degradation
@@ -296,13 +297,13 @@ classification_batch_size: 500      # 2000 in production
 embedding_model: "text-embedding-3-small"
 embedding_dimensions: 1536
 
-# Batch processing (50% cost savings with automated queue management)
+# Fully automated batch processing (50% cost savings, zero manual intervention)
 use_batch_embeddings: false        # Set to true for batch processing
-use_automated_queue: true          # Enable automated 16-batch queue system
+use_automated_queue: true          # Enable fully automated 16-batch queue system
 max_active_batches: 16             # Maximum concurrent batches
 queue_poll_interval: 1800          # 30 minutes between status checks
 batch_embedding_size: 50000        # Requests per batch file
-batch_manual_polling: true         # Manual polling (recommended)
+batch_manual_polling: true         # Required for automated queue (enables smart routing)
 request_quota_limit: 800000        # Conservative 800K request limit (80% of 1M)
 token_quota_limit: 500000000       # 500M token quota management
 
@@ -386,8 +387,8 @@ PIPELINE_ENV=prod python main.py --start subject_enhancement
 - **Progressive candidate retrieval** for large datasets
 - **Environment-adaptive scaling**: Automatic resource allocation based on hardware
 - **Subject enhancement caching**: 10,000-entry imputation cache with size management
-- **Automated queue management**: 16-batch queue with 30-minute polling and automatic slot management
-- **Conservative quota limits**: 800K request limit with safety buffers to prevent quota exceeded errors
+- **Fully automated batch processing**: Self-managing 16-batch queue with intelligent quota management and automatic failed job cleanup
+- **Zero manual intervention**: Runs until completion with real-time status verification and error handling
 
 ## 📈 Results & Analysis
 

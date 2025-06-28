@@ -29,7 +29,7 @@ Input CSV → Preprocessing → Embedding & Indexing → Subject Enhancement →
 entity_resolver/
 ├── 📁 Core Pipeline Components
 │   ├── main.py                          # CLI entry point with stage control
-│   ├── batch_manager.py                 # Manual batch processing management
+│   ├── batch_manager.py                 # Intelligent batch processing management (automated/manual modes)
 │   ├── config.yml                       # Main pipeline configuration
 │   ├── scaling_config.yml               # Feature scaling configuration
 │   ├── docker-compose.yml               # Weaviate vector database setup
@@ -39,7 +39,7 @@ entity_resolver/
 │   ├── orchestrating.py                # Pipeline orchestration & stage management
 │   ├── preprocessing.py                # Optimized CSV processing & CRC32-based deduplication
 │   ├── embedding_and_indexing.py       # Real-time OpenAI embeddings & Weaviate integration
-│   ├── embedding_and_indexing_batch.py # Advanced Batch OpenAI API (50% cost savings, automated queue management, 30-min polling)
+│   ├── embedding_and_indexing_batch.py # Fully Automated Batch OpenAI API (50% cost savings, self-managing 16-batch queue, intelligent quota management)
 │   ├── subject_quality.py              # Subject quality audit using vector similarity analysis
 │   ├── subject_imputation.py           # Missing subject imputation via composite field vectors
 │   ├── feature_engineering.py          # Feature calculation & caching system
@@ -230,7 +230,7 @@ left,right,match
 - **Scalability**: Configurable batch processing and worker allocation
 - **Environment Adaptation**: Local vs. production resource allocation (4-64 cores, 16GB-247GB RAM)
 - **Subject Enhancement**: Automated quality audit and missing value imputation
-- **Batch Cost Optimization**: OpenAI Batch API with 50% cost savings, automated 16-batch queue management, and 30-minute polling
+- **Fully Automated Batch Processing**: Self-managing 16-batch queue with intelligent quota management, automatic failed job cleanup, and real-time status verification
 
 ## Performance Characteristics
 
@@ -253,8 +253,8 @@ left,right,match
 # Complete pipeline with real-time embeddings
 python main.py --config config.yml
 
-# Complete pipeline with batch embeddings (50% cost savings)
-# Set use_batch_embeddings: true in config.yml
+# Complete pipeline with fully automated batch embeddings (50% cost savings)
+# Set use_batch_embeddings: true and use_automated_queue: true in config.yml
 python main.py --config config.yml
 
 # Environment-specific execution
@@ -277,8 +277,10 @@ python main.py --reset training classifying
 
 ### Batch Processing Management
 ```bash
-# Using dedicated batch manager
-python batch_manager.py --create      # Create batch jobs
+# Fully automated batch processing (recommended)
+python batch_manager.py --create      # Starts self-managing automated queue system
+
+# Traditional manual batch operations (if automation disabled)
 python batch_manager.py --status      # Check job status
 python batch_manager.py --download    # Process results
 
@@ -343,15 +345,17 @@ PIPELINE_ENV=prod python main.py --start subject_quality --end subject_imputatio
 - **Feature Group Scaling**: Domain-specific scaling strategies with percentile normalization
 - **Cluster Validation**: Parallel validation with 48 workers for production environments
 
-### Embedding Processing Enhancements
-- **Automated Queue Management**: Maintains 16 active batches with automatic submission as slots free up
-- **Intelligent Polling**: 30-minute polling cycle with adaptive wait times for optimal throughput
-- **Conservative Quota Limits**: 800K request limit (80% of OpenAI's 1M) with 50K safety buffer
+### Fully Automated Batch Processing System (LATEST)
+- **Self-Managing Queue**: Automatically maintains exactly 16 active batches with zero manual intervention
+- **Intelligent Quota Management**: Counts ALL requests (including failed jobs) toward OpenAI's 1M limit for accurate tracking
+- **Real-time Verification**: Immediately validates batch status after submission to catch quota exceeded errors
+- **Automatic Cleanup**: Auto-cancels failed jobs that consume quota space to free resources
+- **Smart Polling**: 30-minute polling cycle with detailed quota status and queue state logging
+- **Conservative Limits**: 800K request limit (80% of OpenAI's 1M) with 50K safety buffer prevents quota exceeded errors
+- **Complete Automation**: Runs until all work is complete with no manual polling or intervention required
+- **Enhanced Visibility**: Real-time quota usage percentages, queue status tracking, and error categorization
 - **Batch API Integration**: OpenAI Batch API support with 50% cost savings and 24-hour turnaround
 - **State Persistence**: Complete queue state recovery from interruptions with checkpoint management
-- **Enhanced Error Handling**: Network timeout categorization, rate limit respect, and graceful degradation
-- **Preprocessing Optimization**: CRC32 hashing and pure in-memory processing (15,000-18,000 rows/sec)
-- **Automatic Batching**: Handles large datasets by splitting into 50,000-request batches
 
 ### Individual Record Classification Enhancement
 - **Parallel API Processing**: Optimized for Anthropic rate limits (200K tokens/min)

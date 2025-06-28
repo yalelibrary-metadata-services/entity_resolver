@@ -1119,7 +1119,8 @@ class BatchEmbeddingPipeline:
     
     def _submit_pending_batches(self, checkpoint_dir: str) -> int:
         """
-        Submit pending batches to fill available queue slots.
+        Submit pending batches ONE AT A TIME with real-time quota verification between each.
+        This conservative approach ensures we never exceed quota limits.
         
         Args:
             checkpoint_dir: Directory for saving batch files
@@ -1132,27 +1133,82 @@ class BatchEmbeddingPipeline:
             return 0
         
         submitted_count = 0
-        batches_to_submit = min(available_slots, len(self.pending_batches))
+        max_to_attempt = min(available_slots, len(self.pending_batches))
         
-        logger.info(f"📤 Submitting {batches_to_submit} pending batches to fill {available_slots} available slots")
+        logger.info(f"📤 Attempting to submit up to {max_to_attempt} pending batches (ONE AT A TIME with quota verification)")
         
-        for _ in range(batches_to_submit):
+        # Submit ONE batch at a time with quota verification between each
+        for attempt in range(max_to_attempt):
             if not self.pending_batches:
                 break
+            
+            # Check quota availability before each submission
+            try:
+                logger.debug(f"🔍 Checking quota before submission attempt {attempt + 1}")
+                current_usage = self._get_current_usage()
                 
+                # Conservative check: ensure we're well under quota
+                quota_usage_pct = current_usage['total_active_requests'] / self.request_quota_limit
+                if quota_usage_pct > 0.95:  # Stop at 95% usage
+                    logger.warning(f"🛑 Quota usage at {quota_usage_pct*100:.1f}% - attempting cleanup and recovery")
+                    
+                    # Try to clean up failed jobs first
+                    cleaned_up = self._cleanup_failed_quota_jobs()
+                    if cleaned_up > 0:
+                        logger.info(f"✅ Cleaned up {cleaned_up} failed jobs - rechecking quota")
+                        # Recheck quota after cleanup
+                        updated_usage = self._get_current_usage()
+                        updated_quota_pct = updated_usage['total_active_requests'] / self.request_quota_limit
+                        if updated_quota_pct <= 0.90:  # Now have room
+                            logger.info(f"🎉 Quota recovered to {updated_quota_pct*100:.1f}% after cleanup - continuing")
+                        else:
+                            logger.warning(f"🚨 Still at {updated_quota_pct*100:.1f}% quota after cleanup - stopping submissions")
+                            break
+                    else:
+                        logger.warning(f"🚨 No failed jobs to clean up - quota genuinely full at {quota_usage_pct*100:.1f}%")
+                        break
+                    
+            except Exception as quota_check_error:
+                logger.warning(f"⚠️  Could not verify quota status before submission: {quota_check_error}")
+                # Continue with submission but be extra cautious
+            
+            # Submit single batch
             batch_data, batch_idx = self.pending_batches.pop(0)
             batch_job_id = self._submit_single_batch(batch_data, batch_idx, checkpoint_dir)
             
             if batch_job_id:
                 self.active_batch_queue.append(batch_job_id)
                 submitted_count += 1
-                logger.info(f"📋 Added batch {batch_job_id[:8]}... to active queue "
-                           f"({len(self.active_batch_queue)}/{self.max_active_batches})")
+                logger.info(f"✅ Successfully submitted batch {batch_job_id[:8]}... ({submitted_count}/{max_to_attempt})")
+                logger.info(f"📋 Active queue: {len(self.active_batch_queue)}/{self.max_active_batches}")
+                
+                # CRITICAL: Verify quota status after EACH successful submission
+                try:
+                    time.sleep(2)  # Brief delay to allow OpenAI to update quota
+                    post_submission_usage = self._get_current_usage()
+                    post_quota_pct = post_submission_usage['total_active_requests'] / self.request_quota_limit
+                    
+                    logger.info(f"📊 Post-submission quota: {post_submission_usage['total_active_requests']:,}/{self.request_quota_limit:,} "
+                               f"({post_quota_pct*100:.1f}%)")
+                    
+                    # Stop if we're approaching quota limits
+                    if post_quota_pct > 0.90:  # Stop at 90% after submission
+                        logger.warning(f"🚨 Quota usage now at {post_quota_pct*100:.1f}% after submission - "
+                                     f"stopping further submissions to prevent quota exceeded")
+                        break
+                        
+                except Exception as post_check_error:
+                    logger.warning(f"⚠️  Could not verify quota after submission: {post_check_error}")
+                    # Continue but be cautious
+                
             else:
                 # If submission failed, put the batch back at the front
                 self.pending_batches.insert(0, (batch_data, batch_idx))
-                logger.warning(f"⚠️  Failed to submit batch {batch_idx + 1}, will retry later")
-                break  # Stop trying if quota issues
+                logger.warning(f"❌ Failed to submit batch {batch_idx + 1} - stopping further attempts")
+                break  # Stop trying if any submission fails
+        
+        if submitted_count > 0:
+            logger.info(f"📤 Successfully submitted {submitted_count} batches with real-time quota verification")
         
         return submitted_count
     
@@ -1314,9 +1370,19 @@ class BatchEmbeddingPipeline:
                         elif len(self.active_batch_queue) >= self.max_active_batches:
                             logger.info(f"⏸️  Queue full ({self.max_active_batches}/{self.max_active_batches}) - waiting for completion")
                         
-                        # Warn if quota is getting high
+                        # Warn if quota is getting high and handle quota recovery
                         quota_usage_pct = current_usage['total_active_requests'] / self.request_quota_limit
-                        if quota_usage_pct > 0.9:
+                        if quota_usage_pct > 0.95:
+                            logger.warning(f"🚨 Critical quota usage: {quota_usage_pct*100:.1f}% - attempting recovery")
+                            
+                            # Try proactive cleanup
+                            cleaned_up = self._cleanup_failed_quota_jobs()
+                            if cleaned_up > 0:
+                                logger.info(f"🧹 Quota recovery: Cleaned up {cleaned_up} failed jobs")
+                                # Force recheck on next cycle
+                                last_status_time = 0  # Trigger immediate status update
+                                
+                        elif quota_usage_pct > 0.9:
                             logger.warning(f"⚠️  High quota usage: {quota_usage_pct*100:.1f}% of request limit consumed")
                         elif quota_usage_pct > 0.8:
                             logger.info(f"📈 Moderate quota usage: {quota_usage_pct*100:.1f}% of request limit consumed")
@@ -1341,15 +1407,55 @@ class BatchEmbeddingPipeline:
                     logger.info(f"🎉 All batches completed!")
                     break
                 
-                # Wait before next poll (30 minutes by default)
-                if self.active_batch_queue and not cycle_had_errors:  # Only wait if there are active batches and no errors
-                    logger.info(f"⏳ Waiting {self.queue_poll_interval / 60:.0f} minutes before next status check...")
+                # Intelligent wait strategy based on queue state and quota status
+                if self.active_batch_queue and not cycle_had_errors:  # Normal operation
+                    logger.info(f"⏳ Normal operation - waiting {self.queue_poll_interval / 60:.0f} minutes before next status check...")
                     time.sleep(self.queue_poll_interval)
                 elif not self.active_batch_queue and self.pending_batches:
-                    # If no active batches but pending ones, shorter wait (may be quota issue)
-                    short_wait = min(self.queue_poll_interval // 4, 900)  # 15 minutes max
-                    logger.info(f"⏳ No active batches but pending work - waiting {short_wait / 60:.0f} minutes before retry...")
-                    time.sleep(short_wait)
+                    # No active batches but pending work - likely quota issue or system recovery needed
+                    logger.warning(f"🔄 No active batches but {len(self.pending_batches)} pending - attempting intelligent recovery")
+                    
+                    # Try quota recovery first
+                    try:
+                        logger.info("🧹 Attempting quota recovery through failed job cleanup...")
+                        cleaned_up = self._cleanup_failed_quota_jobs()
+                        
+                        if cleaned_up > 0:
+                            logger.info(f"✅ Cleaned up {cleaned_up} failed jobs - attempting immediate retry")
+                            # Short delay then retry immediately
+                            time.sleep(30)  # 30 seconds
+                            continue
+                        else:
+                            # No failed jobs to clean up - check quota with probe
+                            logger.info("🔍 No failed jobs found - probing quota availability...")
+                            probe_result = self._probe_quota_availability()
+                            
+                            if probe_result.get('quota_available'):
+                                logger.info("✅ Quota probe successful - quota space available, retrying immediately")
+                                time.sleep(10)  # Brief delay then retry
+                                continue
+                            elif probe_result.get('quota_exceeded'):
+                                logger.warning("🚨 Quota probe confirmed quota exceeded - waiting for quota recovery")
+                                # Longer wait for quota to free up as jobs complete
+                                quota_wait = min(self.queue_poll_interval // 2, 1800)  # 30 minutes max
+                                logger.info(f"⏳ Waiting {quota_wait / 60:.0f} minutes for quota to free up...")
+                                time.sleep(quota_wait)
+                            else:
+                                # Unknown quota status - conservative wait
+                                short_wait = min(self.queue_poll_interval // 4, 900)  # 15 minutes max
+                                logger.info(f"⏳ Unknown quota status - waiting {short_wait / 60:.0f} minutes before retry...")
+                                time.sleep(short_wait)
+                                
+                    except Exception as recovery_error:
+                        logger.error(f"❌ Error during intelligent recovery: {recovery_error}")
+                        # Fallback to normal short wait
+                        short_wait = min(self.queue_poll_interval // 4, 900)  # 15 minutes max
+                        logger.info(f"⏳ Recovery failed - waiting {short_wait / 60:.0f} minutes before retry...")
+                        time.sleep(short_wait)
+                else:
+                    # Some other state - normal wait
+                    logger.info(f"⏳ Standard wait - {self.queue_poll_interval / 60:.0f} minutes before next cycle...")
+                    time.sleep(self.queue_poll_interval)
                 
         except KeyboardInterrupt:
             logger.info(f"🛑 Process interrupted by user")
@@ -1701,6 +1807,227 @@ class BatchEmbeddingPipeline:
                 'available_token_quota': self.token_quota_limit // 2,  # Conservative fallback
                 'available_request_quota': self.request_quota_limit // 2  # Conservative fallback
             }
+    
+    def _probe_quota_availability(self) -> Dict[str, Any]:
+        """
+        Probe quota availability by attempting a small test submission.
+        This is the most reliable way to check if quota is available since OpenAI
+        doesn't provide a direct quota usage API.
+        
+        Returns:
+            Dictionary with quota probe results
+        """
+        logger.debug("🔍 Probing quota availability with test submission")
+        
+        try:
+            # Create a minimal test request
+            test_request = {
+                "custom_id": f"quota_probe_{int(time.time())}",
+                "method": "POST",
+                "url": "/v1/embeddings",
+                "body": {
+                    "model": self.embedding_model,
+                    "input": "test",
+                    "dimensions": self.embedding_dimensions
+                }
+            }
+            
+            # Create temporary JSONL file for probe
+            probe_file_path = os.path.join(self.config.get("checkpoint_dir", "data/checkpoints"), 
+                                         f"quota_probe_{int(time.time())}.jsonl")
+            
+            with open(probe_file_path, 'w') as f:
+                f.write(json.dumps(test_request) + '\n')
+            
+            # Upload probe file
+            try:
+                with open(probe_file_path, 'rb') as f:
+                    file_response = self.openai_client.files.create(
+                        file=f,
+                        purpose='batch'
+                    )
+                probe_file_id = file_response.id
+                logger.debug(f"📤 Uploaded quota probe file: {probe_file_id}")
+                
+                # Attempt to create batch job (this will fail if quota exceeded)
+                try:
+                    batch_response = self.openai_client.batches.create(
+                        input_file_id=probe_file_id,
+                        endpoint="/v1/embeddings",
+                        completion_window="24h",
+                        metadata={
+                            "description": "Quota availability probe",
+                            "created_by": "embedding_and_indexing_batch",
+                            "probe": True
+                        }
+                    )
+                    
+                    # Success! Quota is available
+                    probe_job_id = batch_response.id
+                    logger.debug(f"✅ Quota probe successful: {probe_job_id}")
+                    
+                    # Immediately cancel the probe job to free quota
+                    try:
+                        self.openai_client.batches.cancel(probe_job_id)
+                        logger.debug(f"🧹 Cancelled quota probe job: {probe_job_id}")
+                    except Exception as cancel_error:
+                        logger.warning(f"⚠️  Could not cancel probe job {probe_job_id}: {cancel_error}")
+                    
+                    # Clean up probe file
+                    try:
+                        self.openai_client.files.delete(probe_file_id)
+                        logger.debug(f"🧹 Deleted quota probe file: {probe_file_id}")
+                    except Exception as file_cleanup_error:
+                        logger.warning(f"⚠️  Could not delete probe file {probe_file_id}: {file_cleanup_error}")
+                    
+                    return {
+                        'quota_available': True,
+                        'probe_successful': True,
+                        'probe_job_id': probe_job_id,
+                        'message': 'Quota probe successful - quota space available'
+                    }
+                    
+                except Exception as batch_create_error:
+                    # Check if this is a quota exceeded error
+                    error_msg = str(batch_create_error).lower()
+                    if 'request_limit_exceeded' in error_msg or 'quota' in error_msg or 'limit' in error_msg:
+                        logger.warning(f"🚨 Quota probe detected quota exceeded: {batch_create_error}")
+                        
+                        # Clean up probe file
+                        try:
+                            self.openai_client.files.delete(probe_file_id)
+                            logger.debug(f"🧹 Deleted quota probe file after quota exceeded: {probe_file_id}")
+                        except Exception:
+                            pass
+                        
+                        return {
+                            'quota_available': False,
+                            'probe_successful': True,
+                            'quota_exceeded': True,
+                            'error': str(batch_create_error),
+                            'message': 'Quota probe detected quota exceeded - no space available'
+                        }
+                    else:
+                        # Some other error
+                        logger.error(f"❌ Quota probe failed with unexpected error: {batch_create_error}")
+                        
+                        # Clean up probe file
+                        try:
+                            self.openai_client.files.delete(probe_file_id)
+                        except Exception:
+                            pass
+                        
+                        return {
+                            'quota_available': None,  # Unknown
+                            'probe_successful': False,
+                            'error': str(batch_create_error),
+                            'message': 'Quota probe failed with unexpected error'
+                        }
+                        
+            except Exception as file_upload_error:
+                logger.error(f"❌ Failed to upload quota probe file: {file_upload_error}")
+                
+                # Clean up local file
+                try:
+                    os.remove(probe_file_path)
+                except Exception:
+                    pass
+                
+                return {
+                    'quota_available': None,  # Unknown
+                    'probe_successful': False,
+                    'error': str(file_upload_error),
+                    'message': 'Failed to upload quota probe file'
+                }
+            
+            finally:
+                # Clean up local probe file
+                try:
+                    if os.path.exists(probe_file_path):
+                        os.remove(probe_file_path)
+                        logger.debug(f"🧹 Cleaned up local probe file: {probe_file_path}")
+                except Exception as cleanup_error:
+                    logger.warning(f"⚠️  Could not clean up local probe file: {cleanup_error}")
+                    
+        except Exception as e:
+            logger.error(f"❌ Quota probe failed with exception: {e}")
+            return {
+                'quota_available': None,  # Unknown
+                'probe_successful': False,
+                'error': str(e),
+                'message': 'Quota probe failed with exception'
+            }
+    
+    def _cleanup_failed_quota_jobs(self) -> int:
+        """
+        Proactively find and cleanup failed jobs that are consuming quota.
+        This is more aggressive than the reactive cleanup in _check_and_update_queue_status.
+        
+        Returns:
+            Number of failed jobs cleaned up
+        """
+        logger.info("🧹 Starting proactive cleanup of failed quota-consuming jobs")
+        cleaned_up_count = 0
+        
+        try:
+            # Get all embedding batch jobs from OpenAI API
+            after = None
+            total_checked = 0
+            
+            while True:
+                if after:
+                    batches = self.openai_client.batches.list(limit=100, after=after)
+                else:
+                    batches = self.openai_client.batches.list(limit=100)
+                
+                for batch in batches.data:
+                    endpoint = getattr(batch, 'endpoint', '')
+                    if '/embeddings' in endpoint or endpoint == '/v1/embeddings':
+                        total_checked += 1
+                        
+                        # Check if job failed due to quota exceeded
+                        if batch.status == 'failed':
+                            if hasattr(batch, 'errors') and batch.errors:
+                                for error in batch.errors.data:
+                                    if error.code == 'request_limit_exceeded':
+                                        logger.warning(f"🚨 Found quota-exceeded job {batch.id[:8]}... consuming quota")
+                                        
+                                        try:
+                                            # Cancel the failed job to free up quota
+                                            cancelled_batch = self.openai_client.batches.cancel(batch.id)
+                                            logger.info(f"✅ Successfully cancelled quota-exceeded job {batch.id[:8]}...")
+                                            cleaned_up_count += 1
+                                            
+                                            # Update local tracking if we have it
+                                            if batch.id in self.batch_jobs:
+                                                self.batch_jobs[batch.id]['status'] = 'cancelled'
+                                                
+                                        except Exception as cancel_error:
+                                            # Check if already cancelled
+                                            if 'already' in str(cancel_error).lower() and 'cancel' in str(cancel_error).lower():
+                                                logger.info(f"ℹ️  Job {batch.id[:8]}... already cancelled")
+                                                cleaned_up_count += 1
+                                            else:
+                                                logger.error(f"❌ Failed to cancel quota-exceeded job {batch.id[:8]}...: {cancel_error}")
+                                        break
+                
+                if not batches.has_more:
+                    break
+                    
+                if batches.data:
+                    after = batches.data[-1].id
+                else:
+                    break
+            
+            logger.info(f"🧹 Cleanup complete: Checked {total_checked} embedding jobs, cleaned up {cleaned_up_count} quota-exceeded jobs")
+            
+            if cleaned_up_count > 0:
+                logger.info(f"💡 Cleaned up {cleaned_up_count} failed jobs - quota space should now be available")
+                
+        except Exception as e:
+            logger.error(f"❌ Error during failed job cleanup: {e}")
+            
+        return cleaned_up_count
     
     def _check_quota_capacity(self, new_requests: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
