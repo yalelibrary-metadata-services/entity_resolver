@@ -1,12 +1,38 @@
 #!/bin/bash
-# Local development environment runner for Entity Resolution Pipeline
-# This script sets the environment to 'local' and runs the pipeline with development settings
+# Local development environment setup for Entity Resolution Pipeline
+# This script sets the environment to 'local' for manual stage management
 
 export PIPELINE_ENV=local
 
-echo "Starting Entity Resolution Pipeline in LOCAL development mode"
-echo "Using moderate resource settings for development"
+echo "==============================================="
+echo "Entity Resolution Pipeline - LOCAL ENVIRONMENT"
+echo "==============================================="
 echo "Environment: $PIPELINE_ENV"
-
-# Run the pipeline with any arguments passed to this script
-python -m src.orchestrating "$@"
+echo "Resource Profile: Development (moderate settings)"
+echo ""
+echo "Configuration Summary:"
+echo "  - Preprocessing workers: 4"
+echo "  - Feature workers: 4" 
+echo "  - Classification workers: 8"
+echo "  - Weaviate batch size: 100"
+echo "  - String cache: 100K entries"
+echo ""
+echo "Environment variable PIPELINE_ENV=local is now set."
+echo "You can now run pipeline stages manually:"
+echo ""
+echo "Examples:"
+echo "  # Run preprocessing only"
+echo "  python -m src.orchestrating --start preprocessing --end preprocessing"
+echo ""
+echo "  # Run embedding and indexing"
+echo "  python -m src.orchestrating --start embedding_and_indexing --end embedding_and_indexing"
+echo ""
+echo "  # Run full pipeline"
+echo "  python -m src.orchestrating"
+echo ""
+echo "  # Reset and run specific stage"
+echo "  python -m src.orchestrating --reset preprocessing --start preprocessing"
+echo ""
+echo "Available stages: preprocessing, embedding_and_indexing, subject_quality_audit,"
+echo "                 subject_imputation, training, classifying, reporting"
+echo "==============================================="
