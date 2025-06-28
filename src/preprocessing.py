@@ -259,15 +259,30 @@ def process_data(config: Dict[str, Any], input_dir: str, checkpoint_dir: str, us
     # Process files in parallel
     total_rows = 0
     file_metrics = []
-    batch_size = config.get("preprocessing_batch_size", 10)
+    base_batch_size = config.get("preprocessing_batch_size", 10)
     max_workers = config.get("preprocessing_workers", 4)
+    
+    # Calculate optimal batch size to fully utilize all workers
+    # Ensure each batch has enough files to keep all workers busy
+    optimal_batch_size = max(
+        base_batch_size,  # Respect configured minimum
+        max_workers * 2,  # At least 2 files per worker
+        len(input_files) // max(1, len(input_files) // (max_workers * 3))  # Distribute evenly
+    )
+    
+    # But don't exceed total files or create too many small batches
+    batch_size = min(optimal_batch_size, len(input_files))
+    
+    logger.info(f"Processing {len(input_files)} files with {max_workers} workers")
+    logger.info(f"Using batch size {batch_size} (base: {base_batch_size}, optimal: {optimal_batch_size})")
     
     # Process in batches to avoid memory issues
     for i in range(0, len(input_files), batch_size):
         batch_files = input_files[i:i+batch_size]
-        logger.info(f"Processing batch {i//batch_size + 1}/{(len(input_files)-1)//batch_size + 1} with {len(batch_files)} files")
+        effective_workers = min(max_workers, len(batch_files))
+        logger.info(f"Processing batch {i//batch_size + 1}/{(len(input_files)-1)//batch_size + 1} with {len(batch_files)} files using {effective_workers}/{max_workers} workers")
         
-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        with ProcessPoolExecutor(max_workers=effective_workers) as executor:
             future_to_file = {
                 executor.submit(process_file, file_path): file_path
                 for file_path in batch_files
@@ -449,9 +464,13 @@ class OptimizedPreprocessor:
         total_rows = 0
         errors = []
         
+        # Use all available workers, but don't exceed the number of files
+        effective_workers = min(self.max_workers, len(file_paths))
+        logger.debug(f"Batch {batch_num}: Processing {len(file_paths)} files with {effective_workers} workers")
+        
         # Process files in parallel first to prepare data
         file_data = []
-        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
+        with ProcessPoolExecutor(max_workers=effective_workers) as executor:
             future_to_file = {executor.submit(self._prepare_file_data, fp): fp for fp in file_paths}
             
             for future in as_completed(future_to_file):
@@ -856,8 +875,22 @@ def process_data_optimized(config: Dict[str, Any], input_dir: str, checkpoint_di
     logger.info(f"Found {len(input_files)} input files to process")
     
     # Get configuration parameters
-    batch_size = config.get("preprocessing_batch_size", 50)
+    base_batch_size = config.get("preprocessing_batch_size", 50)
     max_workers = config.get("preprocessing_workers", 4)
+    
+    # Calculate optimal batch size to fully utilize all workers
+    # For optimized processing, we can handle larger batches more efficiently
+    optimal_batch_size = max(
+        base_batch_size,  # Respect configured minimum
+        max_workers * 3,  # At least 3 files per worker for better utilization
+        len(input_files) // max(1, len(input_files) // (max_workers * 4))  # Distribute evenly
+    )
+    
+    # But don't exceed total files
+    batch_size = min(optimal_batch_size, len(input_files))
+    
+    logger.info(f"Processing {len(input_files)} files with {max_workers} workers")
+    logger.info(f"Using batch size {batch_size} (base: {base_batch_size}, optimal: {optimal_batch_size})")
     
     # Initialize global data structures
     output_data = {}
@@ -874,12 +907,13 @@ def process_data_optimized(config: Dict[str, Any], input_dir: str, checkpoint_di
         batch_start = time.time()
         batch_files = input_files[batch_idx:batch_idx + batch_size]
         batch_num = batch_idx // batch_size + 1
+        effective_workers = min(max_workers, len(batch_files))
         
-        logger.info(f"Processing batch {batch_num}/{total_batches} with {len(batch_files)} files")
+        logger.info(f"Processing batch {batch_num}/{total_batches} with {len(batch_files)} files using {effective_workers}/{max_workers} workers")
         
         # Process files in parallel
         batch_results = []
-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        with ProcessPoolExecutor(max_workers=effective_workers) as executor:
             # Use the optimized file processing function
             future_to_file = {
                 executor.submit(_process_file_optimized, file_path): file_path 
