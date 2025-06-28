@@ -231,6 +231,27 @@ class WeaviateSearchDiagnostic:
         """Get random title vectors and perform near_vector searches with each"""
         print(f"\n2. Getting random sample of {sample_size} title vectors and performing searches...")
         
+        # Ensure we have data structures loaded for text resolution and subject extraction
+        if self.string_dict is None:
+            print("   Loading string dictionary to resolve title text...")
+            string_dict_path = self.find_file(DEFAULT_STRING_DICT_PATHS)
+            if string_dict_path:
+                with open(string_dict_path, 'rb') as f:
+                    self.string_dict = pickle.load(f)
+                print(f"   ✓ Loaded string dictionary ({len(self.string_dict)} entries)")
+            else:
+                print("   ⚠️  Could not find string dictionary - titles will show as hashes only")
+        
+        if self.hash_lookup is None:
+            print("   Loading hash lookup for subject extraction...")
+            hash_lookup_path = self.find_file(DEFAULT_HASH_LOOKUP_PATHS)
+            if hash_lookup_path:
+                with open(hash_lookup_path, 'rb') as f:
+                    self.hash_lookup = pickle.load(f)
+                print(f"   ✓ Loaded hash lookup ({len(self.hash_lookup)} entries)")
+            else:
+                print("   ⚠️  Could not find hash lookup - subjects will not be available")
+        
         try:
             collection = self.weaviate_client.collections.get("EntityString")
             
@@ -275,10 +296,17 @@ class WeaviateSearchDiagnostic:
                         continue
                     
                     props = obj.properties
+                    hash_value = props.get('hash_value', '')
+                    
+                    # Get the actual text content from string_dict using the hash
+                    text_content = ''
+                    if self.string_dict and hash_value:
+                        text_content = self.string_dict.get(hash_value, '')
+                    
                     title_candidates.append({
                         'vector': vector_data,
-                        'hash_value': props.get('hash_value', ''),
-                        'text_content': props.get('text_content', '')
+                        'hash_value': hash_value,
+                        'text_content': text_content
                     })
             
             # Randomly sample title vectors
@@ -430,12 +458,8 @@ class WeaviateSearchDiagnostic:
         print(f"Random Title Sample Size: {sample_size}")
         print(f"Search Results per Title: {search_limit}")
         
-        # Ensure data structures are loaded for subject extraction
-        if self.hash_lookup is None or self.string_dict is None:
-            print("Loading data structures for subject extraction...")
-            self.load_data_structures()
-        
         # Get random title vectors and perform searches
+        # The function will load necessary data structures as needed
         results = self.get_random_title_vectors_and_search(sample_size, search_limit)
         
         # Display results
