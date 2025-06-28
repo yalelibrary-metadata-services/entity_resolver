@@ -156,10 +156,21 @@ def create_jobs(config: Dict[str, Any]) -> None:
         # Initialize batch pipeline with proper context management
         try:
             with BatchEmbeddingPipeline(config) as pipeline:
-                # Create batch jobs
-                result = pipeline.create_batch_jobs_only(
-                    string_dict, field_hash_mapping, string_counts, checkpoint_dir
-                )
+                # Check if automated queue is enabled
+                use_automated_queue = config.get("use_automated_queue", False)
+                batch_manual_polling = config.get("batch_manual_polling", True)
+                
+                # Use automated queue if enabled and manual polling is also enabled
+                if use_automated_queue and batch_manual_polling:
+                    print(f"🤖 Using automated queue management (16-batch queue with 30-min polling)")
+                    result = pipeline.create_batch_jobs_with_automated_queue(
+                        string_dict, field_hash_mapping, string_counts, checkpoint_dir
+                    )
+                else:
+                    print(f"📋 Using manual batch creation mode")
+                    result = pipeline.create_batch_jobs_only(
+                        string_dict, field_hash_mapping, string_counts, checkpoint_dir
+                    )
                 
                 if result['status'] == 'jobs_created':
                     print(f"\n✅ Successfully created {result['jobs_created']} batch jobs!")

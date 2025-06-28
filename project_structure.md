@@ -39,7 +39,7 @@ entity_resolver/
 │   ├── orchestrating.py                # Pipeline orchestration & stage management
 │   ├── preprocessing.py                # Optimized CSV processing & CRC32-based deduplication
 │   ├── embedding_and_indexing.py       # Real-time OpenAI embeddings & Weaviate integration
-│   ├── embedding_and_indexing_batch.py # Advanced Batch OpenAI API (50% cost savings, quota management, recovery)
+│   ├── embedding_and_indexing_batch.py # Advanced Batch OpenAI API (50% cost savings, automated queue management, 30-min polling)
 │   ├── subject_quality.py              # Subject quality audit using vector similarity analysis
 │   ├── subject_imputation.py           # Missing subject imputation via composite field vectors
 │   ├── feature_engineering.py          # Feature calculation & caching system
@@ -92,6 +92,7 @@ entity_resolver/
 │   │   ├── processed_hashes.pkl        # Real-time embedding processing checkpoints
 │   │   ├── batch_processed_hashes.pkl  # Batch embedding processing checkpoints
 │   │   ├── batch_jobs.pkl              # OpenAI batch job tracking and metadata
+│   │   ├── batch_queue_state.pkl       # Automated queue state (active, pending, completed batches)
 │   │   ├── batch_blacklisted_files.pkl # Blacklisted batch files to avoid reprocessing
 │   │   ├── batch_requests_*.jsonl      # JSONL files uploaded to OpenAI Batch API
 │   │   ├── batch_results_*.jsonl       # JSONL results downloaded from OpenAI
@@ -229,7 +230,7 @@ left,right,match
 - **Scalability**: Configurable batch processing and worker allocation
 - **Environment Adaptation**: Local vs. production resource allocation (4-64 cores, 16GB-247GB RAM)
 - **Subject Enhancement**: Automated quality audit and missing value imputation
-- **Batch Cost Optimization**: OpenAI Batch API integration with 50% cost savings and quota management
+- **Batch Cost Optimization**: OpenAI Batch API with 50% cost savings, automated 16-batch queue management, and 30-minute polling
 
 ## Performance Characteristics
 
@@ -343,12 +344,14 @@ PIPELINE_ENV=prod python main.py --start subject_quality --end subject_imputatio
 - **Cluster Validation**: Parallel validation with 48 workers for production environments
 
 ### Embedding Processing Enhancements
+- **Automated Queue Management**: Maintains 16 active batches with automatic submission as slots free up
+- **Intelligent Polling**: 30-minute polling cycle with adaptive wait times for optimal throughput
+- **Conservative Quota Limits**: 800K request limit (80% of OpenAI's 1M) with 50K safety buffer
 - **Batch API Integration**: OpenAI Batch API support with 50% cost savings and 24-hour turnaround
-- **Quota Management**: Token and request quota tracking with safety margins
-- **Manual Polling**: No need to keep scripts running - check status when convenient
+- **State Persistence**: Complete queue state recovery from interruptions with checkpoint management
+- **Enhanced Error Handling**: Network timeout categorization, rate limit respect, and graceful degradation
 - **Preprocessing Optimization**: CRC32 hashing and pure in-memory processing (15,000-18,000 rows/sec)
 - **Automatic Batching**: Handles large datasets by splitting into 50,000-request batches
-- **Recovery System**: API-based job recovery with blacklist management
 
 ### Individual Record Classification Enhancement
 - **Parallel API Processing**: Optimized for Anthropic rate limits (200K tokens/min)
@@ -431,9 +434,14 @@ batch_manual_polling: true          # Manual polling (recommended)
 batch_poll_interval: 300            # Seconds between status polls (auto mode)
 batch_max_wait_time: 86400          # Maximum wait time (24 hours)
 
-# Quota management
+# Automated Queue Management Configuration
+use_automated_queue: true           # Enable automated 16-batch queue system
+max_active_batches: 16              # Maximum concurrent batches (default: 16)  
+queue_poll_interval: 1800           # 30 minutes between status checks (default: 1800)
+request_quota_limit: 800000         # Conservative 800K request limit (80% of 1M)
+
+# Traditional quota management (fallback)
 token_quota_limit: 500000000        # 500M token limit
-request_quota_limit: 1000000        # 1M request limit
 max_concurrent_jobs: 50             # Limit concurrent batch jobs
 quota_safety_margin: 0.1            # 10% safety margin
 ```

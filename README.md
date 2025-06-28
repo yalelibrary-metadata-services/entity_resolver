@@ -34,8 +34,8 @@ curl http://localhost:8080/v1/.well-known/ready  # Check readiness
 # Run complete pipeline (real-time embeddings)
 python main.py --config config.yml
 
-# Run with batch embeddings (50% cost savings, 24h turnaround)
-# Set use_batch_embeddings: true in config.yml
+# Run with batch embeddings (50% cost savings, automated queue management)
+# Set use_batch_embeddings: true and use_automated_queue: true in config.yml
 python main.py --config config.yml
 
 # Environment-specific execution
@@ -50,7 +50,10 @@ python main.py --start subject_quality --end subject_quality    # Quality audit 
 python main.py --start subject_imputation --end subject_imputation  # Imputation only
 python main.py --start subject_quality --end subject_imputation     # Both enhancement stages
 
-# Manual batch processing
+# Automated queue batch processing (runs until completion)
+python main.py --config config.yml  # Starts automated queue management
+
+# Manual batch operations (if automated queue disabled)
 python main.py --batch-status     # Check batch job status
 python main.py --batch-results    # Download and process results
 
@@ -154,12 +157,14 @@ Pre-pipeline data preparation uses XQuery extraction from BIBFRAME catalog data:
 - Ideal for development and smaller datasets
 
 **Batch Processing** (`src/embedding_and_indexing_batch.py`):
+- **Automated Queue Management**: Maintains 16 active batches, automatically submitting new ones as slots free up
+- **Intelligent Polling**: 30-minute polling cycle with adaptive error handling and retry logic
+- **Conservative Quota Management**: 800K request limit (80% of OpenAI's 1M) with 50K safety buffer
 - OpenAI Batch API with 50% cost savings and 24-hour turnaround
-- Advanced quota management (500M tokens, 1M requests) with safety margins
-- Manual polling system - no need to keep scripts running continuously
+- **State Persistence**: Complete queue recovery from interruptions with checkpoint management
+- **Enhanced Error Handling**: Network timeout categorization, rate limit respect, graceful degradation
 - Automatic batching (up to 50,000 requests per batch file)
 - Comprehensive job tracking, recovery, and blacklist management
-- Concurrent job limiting (up to 50 simultaneous batch jobs)
 - Download retry logic with gateway timeout handling
 - Ideal for production and large datasets (31M+ strings)
 
@@ -291,12 +296,15 @@ classification_batch_size: 500      # 2000 in production
 embedding_model: "text-embedding-3-small"
 embedding_dimensions: 1536
 
-# Batch processing (50% cost savings)
+# Batch processing (50% cost savings with automated queue management)
 use_batch_embeddings: false        # Set to true for batch processing
+use_automated_queue: true          # Enable automated 16-batch queue system
+max_active_batches: 16             # Maximum concurrent batches
+queue_poll_interval: 1800          # 30 minutes between status checks
 batch_embedding_size: 50000        # Requests per batch file
 batch_manual_polling: true         # Manual polling (recommended)
+request_quota_limit: 800000        # Conservative 800K request limit (80% of 1M)
 token_quota_limit: 500000000       # 500M token quota management
-request_quota_limit: 1000000       # 1M request quota management
 
 # Subject Enhancement Configuration
 subject_quality_audit:
@@ -378,7 +386,8 @@ PIPELINE_ENV=prod python main.py --start subject_enhancement
 - **Progressive candidate retrieval** for large datasets
 - **Environment-adaptive scaling**: Automatic resource allocation based on hardware
 - **Subject enhancement caching**: 10,000-entry imputation cache with size management
-- **Quota management**: Token and request quota tracking with safety margins
+- **Automated queue management**: 16-batch queue with 30-minute polling and automatic slot management
+- **Conservative quota limits**: 800K request limit with safety buffers to prevent quota exceeded errors
 
 ## 📈 Results & Analysis
 

@@ -995,7 +995,32 @@ class BatchEmbeddingPipeline:
                 'auto_queue': True  # Mark as auto-queue managed
             }
             
-            logger.info(f"✅ Submitted batch job {batch_job_id} for batch {batch_idx + 1}")
+            # CRITICAL: Immediately verify batch status after submission
+            # This catches quota exceeded errors that happen after submission
+            try:
+                time.sleep(1)  # Brief delay to allow OpenAI to process the submission
+                batch_status = self.openai_client.batches.retrieve(batch_job_id)
+                
+                # Update local status
+                self.batch_jobs[batch_job_id]['status'] = batch_status.status
+                
+                # Check if job failed immediately (quota exceeded, etc.)
+                if batch_status.status == 'failed':
+                    logger.error(f"❌ Batch job {batch_job_id} failed immediately after submission")
+                    if hasattr(batch_status, 'errors') and batch_status.errors:
+                        for error in batch_status.errors.data:
+                            logger.error(f"   Error: {error.code} - {error.message}")
+                            if error.code == 'request_limit_exceeded':
+                                logger.warning(f"🛑 QUOTA EXCEEDED: OpenAI's 1M request limit reached!")
+                                logger.warning(f"   Failed job {batch_job_id} should be cancelled to free quota")
+                    return None  # Return None to indicate failure
+                else:
+                    logger.info(f"✅ Submitted batch job {batch_job_id} for batch {batch_idx + 1} (status: {batch_status.status})")
+                    
+            except Exception as status_check_error:
+                logger.warning(f"⚠️  Could not verify status of submitted job {batch_job_id}: {status_check_error}")
+                # Still return the job ID - the status check will catch issues later
+            
             return batch_job_id
             
         except Exception as e:
@@ -1033,8 +1058,23 @@ class BatchEmbeddingPipeline:
                     
                     if current_status == BatchJobStatus.COMPLETED:
                         logger.info(f"✅ Batch job {batch_job_id[:8]}... completed")
+                    elif current_status == BatchJobStatus.FAILED:
+                        logger.warning(f"❌ Batch job {batch_job_id[:8]}... failed")
+                        
+                        # CRITICAL: Auto-cleanup failed jobs that consume quota
+                        if hasattr(batch_status, 'errors') and batch_status.errors:
+                            for error in batch_status.errors.data:
+                                if error.code == 'request_limit_exceeded':
+                                    logger.warning(f"🧹 Auto-cancelling quota-exceeded job {batch_job_id[:8]}... to free quota space")
+                                    try:
+                                        # Cancel the failed job to free up quota
+                                        self.openai_client.batches.cancel(batch_job_id)
+                                        logger.info(f"✅ Successfully cancelled failed job {batch_job_id[:8]}...")
+                                    except Exception as cancel_error:
+                                        logger.error(f"❌ Failed to cancel job {batch_job_id[:8]}...: {cancel_error}")
+                                    break
                     else:
-                        logger.warning(f"❌ Batch job {batch_job_id[:8]}... failed with status: {current_status}")
+                        logger.warning(f"❌ Batch job {batch_job_id[:8]}... terminated with status: {current_status}")
                         
             except Exception as e:
                 api_errors += 1
@@ -1139,6 +1179,19 @@ class BatchEmbeddingPipeline:
         logger.info(f"🔧 Configuration: Conservative request limit: {self.request_quota_limit:,}")
         start_time = time.time()
         
+        # Check initial quota status
+        try:
+            initial_usage = self._get_current_usage()
+            logger.info(f"📊 Initial quota status: {initial_usage['total_active_requests']:,}/{self.request_quota_limit:,} requests "
+                       f"({initial_usage['total_active_requests']/self.request_quota_limit*100:.1f}%), "
+                       f"{initial_usage['active_jobs']} active jobs")
+            
+            if initial_usage['total_active_requests'] > self.request_quota_limit * 0.9:
+                logger.warning(f"⚠️  Starting with high quota usage ({initial_usage['total_active_requests']/self.request_quota_limit*100:.1f}%) - "
+                             f"limited capacity for new jobs")
+        except Exception as quota_error:
+            logger.warning(f"⚠️  Could not check initial quota status: {quota_error}")
+        
         # Load checkpoint
         self.load_checkpoint(checkpoint_dir)
         
@@ -1229,19 +1282,58 @@ class BatchEmbeddingPipeline:
                         # Short delay before retrying
                         time.sleep(60)  # 1 minute
                 
-                # Status update every 5 minutes or when significant changes occur
+                # Enhanced status update every 5 minutes or when significant changes occur
                 current_time = time.time()
                 if (current_time - last_status_time >= 300 or slots_freed > 0 or 
                     cycle_had_errors or total_cycles == 1):  # 5 minutes or significant events
-                    status_msg = f"📊 Cycle {total_cycles}: Queue status: " \
-                               f"{len(self.active_batch_queue)} active, " \
-                               f"{len(self.pending_batches)} pending, " \
-                               f"{len(self.completed_batches)} completed"
                     
-                    if cycle_had_errors:
-                        status_msg += f" (cycle had errors: {consecutive_errors}/{max_consecutive_errors})"
+                    # Get detailed queue status with quota information
+                    try:
+                        current_usage = self._get_current_usage()
+                        available_slots = self.max_active_batches - len(self.active_batch_queue)
+                        
+                        status_msg = f"📊 Cycle {total_cycles}: Queue: " \
+                                   f"{len(self.active_batch_queue)}/{self.max_active_batches} active, " \
+                                   f"{len(self.pending_batches)} pending, " \
+                                   f"{len(self.completed_batches)} completed"
+                        
+                        # Add quota status
+                        quota_msg = f"🔢 Quota: {current_usage['total_active_requests']:,}/{self.request_quota_limit:,} requests " \
+                                   f"({current_usage['total_active_requests']/self.request_quota_limit*100:.1f}%), " \
+                                   f"{current_usage['active_jobs']} active jobs"
+                        
+                        if cycle_had_errors:
+                            status_msg += f" (cycle had errors: {consecutive_errors}/{max_consecutive_errors})"
+                        
+                        logger.info(status_msg)
+                        logger.info(quota_msg)
+                        
+                        # Log available capacity
+                        if available_slots > 0 and self.pending_batches:
+                            logger.info(f"💡 {available_slots} queue slots available, {len(self.pending_batches)} batches pending")
+                        elif len(self.active_batch_queue) >= self.max_active_batches:
+                            logger.info(f"⏸️  Queue full ({self.max_active_batches}/{self.max_active_batches}) - waiting for completion")
+                        
+                        # Warn if quota is getting high
+                        quota_usage_pct = current_usage['total_active_requests'] / self.request_quota_limit
+                        if quota_usage_pct > 0.9:
+                            logger.warning(f"⚠️  High quota usage: {quota_usage_pct*100:.1f}% of request limit consumed")
+                        elif quota_usage_pct > 0.8:
+                            logger.info(f"📈 Moderate quota usage: {quota_usage_pct*100:.1f}% of request limit consumed")
+                            
+                    except Exception as status_error:
+                        # Fallback to basic status if quota check fails
+                        status_msg = f"📊 Cycle {total_cycles}: Queue status: " \
+                                   f"{len(self.active_batch_queue)} active, " \
+                                   f"{len(self.pending_batches)} pending, " \
+                                   f"{len(self.completed_batches)} completed"
+                        
+                        if cycle_had_errors:
+                            status_msg += f" (cycle had errors: {consecutive_errors}/{max_consecutive_errors})"
+                        
+                        logger.info(status_msg)
+                        logger.warning(f"⚠️  Could not get quota status: {status_error}")
                     
-                    logger.info(status_msg)
                     last_status_time = current_time
                 
                 # Exit condition: all batches completed
@@ -1548,7 +1640,9 @@ class BatchEmbeddingPipeline:
                     # Store status for ALL embedding batches (not just ours)
                     endpoint = getattr(batch, 'endpoint', '')
                     if '/embeddings' in endpoint or endpoint == '/v1/embeddings':
-                        if batch.status in ['pending', 'validating', 'in_progress', 'finalizing']:
+                        # CRITICAL FIX: Count ALL submitted requests that might consume quota
+                        # OpenAI's 1M request limit apparently includes failed jobs until they're cleaned up
+                        if batch.status in ['pending', 'validating', 'in_progress', 'finalizing', 'failed']:
                             api_batch_statuses[batch.id] = batch.status
                             
                             # Get request count from OpenAI for accurate tracking
@@ -1556,13 +1650,19 @@ class BatchEmbeddingPipeline:
                                 request_count = getattr(batch.request_counts, 'total', 0)
                                 total_active_requests += request_count
                                 estimated_active_tokens += request_count * 100  # 100 tokens/request estimate
-                                active_jobs += 1
+                                
+                                # Only count as "active job" if actually processing
+                                if batch.status in ['pending', 'validating', 'in_progress', 'finalizing']:
+                                    active_jobs += 1
                             else:
                                 # Fallback: estimate from file size
                                 fallback_requests = self.max_requests_per_file
                                 total_active_requests += fallback_requests
                                 estimated_active_tokens += fallback_requests * 100
-                                active_jobs += 1
+                                
+                                # Only count as "active job" if actually processing
+                                if batch.status in ['pending', 'validating', 'in_progress', 'finalizing']:
+                                    active_jobs += 1
                 
                 if not batches.has_more:
                     break
@@ -1573,6 +1673,11 @@ class BatchEmbeddingPipeline:
                     break
             
             logger.info(f"Found {active_jobs} active embedding batch jobs using ~{estimated_active_tokens:,} tokens and {total_active_requests:,} requests")
+            
+            # Count failed jobs for better visibility into quota consumption
+            failed_jobs = len([batch_id for batch_id, status in api_batch_statuses.items() if status == 'failed'])
+            if failed_jobs > 0:
+                logger.warning(f"⚠️  {failed_jobs} failed embedding jobs are still consuming quota (should be cancelled to free space)")
             
             return {
                 'active_jobs': active_jobs,
