@@ -913,6 +913,7 @@ def process_data_optimized(config: Dict[str, Any], input_dir: str, checkpoint_di
         
         # Process files in parallel
         batch_results = []
+        batch_worker_start_time = time.time()
         with ProcessPoolExecutor(max_workers=effective_workers) as executor:
             # Use the optimized file processing function
             future_to_file = {
@@ -920,13 +921,23 @@ def process_data_optimized(config: Dict[str, Any], input_dir: str, checkpoint_di
                 for file_path in batch_files
             }
             
+            active_workers = 0
+            completed_files = 0
             for future in as_completed(future_to_file):
                 file_path = future_to_file[future]
+                completed_files += 1
                 try:
                     result = future.result()
                     if result:
                         batch_results.append(result)
                         total_rows += result['rows_processed']
+                        
+                    # Log progress every 50 files or at key milestones
+                    if completed_files % 50 == 0 or completed_files in [10, 25] or completed_files == len(batch_files):
+                        elapsed = time.time() - batch_worker_start_time
+                        rate = completed_files / elapsed if elapsed > 0 else 0
+                        logger.info(f"  Batch {batch_num}: Completed {completed_files}/{len(batch_files)} files ({rate:.1f} files/sec)")
+                        
                 except Exception as e:
                     logger.error(f"Error processing file {file_path}: {str(e)}")
         
