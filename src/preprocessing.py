@@ -1319,9 +1319,9 @@ if __name__ == "__main__":
     parser.add_argument('--optimized', action='store_true', help='Use optimized SQLite-based preprocessing (recommended for large datasets)')
     args = parser.parse_args()
     
-    # Load configuration
-    with open(args.config, 'r') as f:
-        config = yaml.safe_load(f)
+    # Load configuration with environment-specific overrides
+    from src.config_utils import load_config_with_environment
+    config = load_config_with_environment(args.config)
     
     # Override config with command line arguments
     if args.input_dir:

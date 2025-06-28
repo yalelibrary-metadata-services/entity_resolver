@@ -203,27 +203,20 @@ class PipelineOrchestrator:
     
     def _load_config(self) -> Dict[str, Any]:
         """
-        Load configuration from file.
+        Load configuration from file with environment-specific overrides.
         
         Returns:
             Configuration dictionary
         """
         try:
-            with open(self.config_path, 'r') as f:
-                config = yaml.safe_load(f)
-            
-            # Set default values for required parameters
-            config.setdefault('input_dir', 'data/input')
-            config.setdefault('output_dir', 'data/output')
-            config.setdefault('checkpoint_dir', 'data/checkpoints')
-            config.setdefault('ground_truth_dir', 'data/ground_truth')
-            config.setdefault('log_dir', 'logs')
-            
-            return config
+            # Use shared config utility for consistency with standalone modules
+            from src.config_utils import load_config_with_environment
+            return load_config_with_environment(self.config_path)
             
         except Exception as e:
             print(f"Error loading configuration: {str(e)}")
             raise
+    
     
     def _setup_logging(self) -> None:
         """

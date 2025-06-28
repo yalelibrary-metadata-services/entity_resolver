@@ -1967,9 +1967,9 @@ if __name__ == "__main__":
     
     # Handle reset flag
     if args.reset:
-        # Load config to get checkpoint directory
-        with open(args.config, 'r') as f:
-            config = yaml.safe_load(f)
+        # Load config to get checkpoint directory with environment-specific overrides
+        from src.config_utils import load_config_with_environment
+        config = load_config_with_environment(args.config)
         
         checkpoint_dir = config.get("checkpoint_dir", "data/checkpoints")
         batch_files = [
@@ -1983,9 +1983,9 @@ if __name__ == "__main__":
                 os.remove(file_path)
                 logger.info(f"Deleted checkpoint file: {file_path}")
     
-    # Load configuration and run batch processing
-    with open(args.config, 'r') as f:
-        config = yaml.safe_load(f)
+    # Load configuration and run batch processing with environment-specific overrides
+    from src.config_utils import load_config_with_environment
+    config = load_config_with_environment(args.config)
     
     # Load preprocessing data
     checkpoint_dir = config.get("checkpoint_dir", "data/checkpoints")

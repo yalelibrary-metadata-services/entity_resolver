@@ -1329,9 +1329,9 @@ def main(config_path: str = 'config.yml', reset: bool = False, disable_scaling: 
         reset: Whether to reset training and start from scratch
         disable_scaling: Whether to disable feature scaling
     """
-    # Load configuration
-    with open(config_path, 'r') as f:
-        config = yaml.safe_load(f)
+    # Load configuration with environment-specific overrides
+    from src.config_utils import load_config_with_environment
+    config = load_config_with_environment(config_path)
     
     # Override config values
     if disable_scaling:
@@ -1384,9 +1384,9 @@ if __name__ == "__main__":
                         help='Disable all feature scaling and use raw values directly')
     args = parser.parse_args()
     
-    # Load configuration
-    with open(args.config, 'r') as f:
-        config = yaml.safe_load(f)
+    # Load configuration with environment-specific overrides
+    from src.config_utils import load_config_with_environment
+    config = load_config_with_environment(args.config)
     
     # Add flags to config
     config['use_enhanced_scaling'] = args.use_enhanced_scaling

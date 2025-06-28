@@ -773,9 +773,9 @@ def main(config_path: str = 'config.yml'):
     import pickle
     import os
     
-    # Load configuration
-    with open(config_path, 'r') as f:
-        config = yaml.safe_load(f)
+    # Load configuration with environment-specific overrides
+    from src.config_utils import load_config_with_environment
+    config = load_config_with_environment(config_path)
     
     # Get checkpoint directory
     checkpoint_dir = config.get("checkpoint_dir", "data/checkpoints")
@@ -838,10 +838,9 @@ if __name__ == "__main__":
         import shutil
         import os
         
-        # Load config to get checkpoint directory
-        import yaml
-        with open(args.config, 'r') as f:
-            config = yaml.safe_load(f)
+        # Load config to get checkpoint directory with environment-specific overrides
+        from src.config_utils import load_config_with_environment
+        config = load_config_with_environment(args.config)
         
         checkpoint_dir = config.get("checkpoint_dir", "data/checkpoints")
         processed_hashes_path = os.path.join(checkpoint_dir, 'processed_hashes.pkl')

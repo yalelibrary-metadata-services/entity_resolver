@@ -28,10 +28,39 @@ entity_matching:
 use_enhanced_scaling: true
 scaling_config_path: "scaling_config.yml"
 
-# Resource Allocation
+# Resource Allocation - Environment-specific configuration
+# Set environment with PIPELINE_ENV=prod or PIPELINE_ENV=local (default: local)
+
+# Local Development Configuration (default)
+local_resources:
+  preprocessing_workers: 4
+  preprocessing_batch_size: 50
+  preprocessing_use_optimized: true
+  embedding_workers: 4
+  embedding_batch_size: 32
+  embedding_checkpoint_batch: 1000
+  feature_workers: 4
+  feature_batch_size: 1000
+  classification_workers: 8
+  classification_batch_size: 500
+
+# Production Configuration (64 cores, 247GB RAM)
+prod_resources:
+  preprocessing_workers: 32               # Utilize half cores for I/O bound preprocessing
+  preprocessing_batch_size: 500          # Larger batches for better memory utilization  
+  preprocessing_use_optimized: true      # Use SQLite-based preprocessing for large datasets
+  embedding_workers: 16                  # Balance between API rate limits and parallelism
+  embedding_batch_size: 100              # Larger batches to reduce API overhead
+  embedding_checkpoint_batch: 5000       # Less frequent checkpointing for performance
+  feature_workers: 48                    # High parallelism for CPU-intensive feature computation
+  feature_batch_size: 5000               # Large batches to utilize available RAM
+  classification_workers: 32             # High parallelism for classification
+  classification_batch_size: 2000        # Large batches for efficient processing
+
+# Active configuration (will be set by environment)
 preprocessing_workers: 4
-preprocessing_batch_size: 50  # Increased for better throughput
-preprocessing_use_optimized: true  # Use SQLite-based preprocessing for large datasets
+preprocessing_batch_size: 50
+preprocessing_use_optimized: true
 embedding_workers: 4
 embedding_batch_size: 32
 embedding_checkpoint_batch: 1000
@@ -58,7 +87,33 @@ batch_manual_polling: true  # Set to true for manual polling, false for automati
 batch_poll_interval: 300  # Seconds between status polls when auto-polling (5 minutes)
 batch_max_wait_time: 86400  # Maximum wait time for batch completion (24 hours)
 
-# Weaviate Configuration
+# Weaviate Configuration - Environment-specific
+
+# Local Development Weaviate Settings
+local_weaviate:
+  weaviate_url: "http://localhost:8080"
+  weaviate_timeout: 300
+  weaviate_batch_size: 100
+  weaviate_ef: 128
+  weaviate_max_connections: 64
+  weaviate_ef_construction: 128
+  weaviate_grpc_max_receive_size: 104857600  # 100MB
+  weaviate_connection_pool_size: 16
+  weaviate_query_concurrent_limit: 4
+
+# Production Weaviate Settings (optimized for 64 cores, 247GB RAM)
+prod_weaviate:
+  weaviate_url: "http://localhost:8080"
+  weaviate_timeout: 600                    # Longer timeout for large operations
+  weaviate_batch_size: 1000               # Much larger batch sizes
+  weaviate_ef: 256                        # Higher EF for better recall
+  weaviate_max_connections: 128           # More connections for parallelism
+  weaviate_ef_construction: 256           # Higher construction parameter
+  weaviate_grpc_max_receive_size: 536870912  # 512MB for very large responses
+  weaviate_connection_pool_size: 64       # Match available cores
+  weaviate_query_concurrent_limit: 32     # High concurrency for production
+
+# Active Weaviate configuration (default to local)
 weaviate_url: "http://localhost:8080"
 weaviate_timeout: 300      # Increased timeout (seconds)
 weaviate_batch_size: 100
@@ -76,7 +131,41 @@ weaviate:
   batch_size: 10000            # Size of each batch for retrieval
   enable_progressive_retrieval: false  # Enable multi-batch retrieval
 
-# Cluster Validation Configuration
+# Cluster Validation Configuration - Environment-specific
+
+# Local Development Cluster Validation
+local_cluster_validation:
+  enabled: true
+  similarity_threshold: 0.65
+  coherence_threshold: 0.50
+  small_cluster_threshold: 2
+  min_cluster_size: 2
+  adaptive_validation: true
+  large_cluster_threshold: 1000
+  use_vector_based_validation: true
+  use_composite_only_validation: true
+  use_parallel: true
+  parallel_workers: 8
+  debug_problematic_pairs: true
+  debug_similarity_threshold: 0.65
+
+# Production Cluster Validation (optimized for 64 cores, 247GB RAM)
+prod_cluster_validation:
+  enabled: true
+  similarity_threshold: 0.65
+  coherence_threshold: 0.50
+  small_cluster_threshold: 2
+  min_cluster_size: 2
+  adaptive_validation: true
+  large_cluster_threshold: 1000
+  use_vector_based_validation: true
+  use_composite_only_validation: true
+  use_parallel: true
+  parallel_workers: 48          # Much higher parallelism for production
+  debug_problematic_pairs: true
+  debug_similarity_threshold: 0.65
+
+# Active cluster validation configuration (default to local)
 cluster_validation:
   enabled: true                 # Enable cluster validation to improve precision
   similarity_threshold: 0.65    # Decreased to allow more merging of clusters
@@ -304,7 +393,23 @@ feature_substitutions:
 query_limit: 100
 query_batch_size: 20
 
-# Cache Management
+# Cache Management - Environment-specific
+
+# Local Development Cache Settings
+local_cache:
+  disable_feature_caching: false
+  string_cache_size: 100000
+  vector_cache_size: 50000
+  similarity_cache_size: 200000
+
+# Production Cache Settings (optimized for 247GB RAM)
+prod_cache:
+  disable_feature_caching: false
+  string_cache_size: 2000000      # 20x larger for production
+  vector_cache_size: 1000000      # 20x larger for production
+  similarity_cache_size: 5000000  # 25x larger for production
+
+# Active cache configuration (default to local)
 disable_feature_caching: false
 string_cache_size: 100000
 vector_cache_size: 50000

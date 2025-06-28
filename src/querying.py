@@ -680,9 +680,9 @@ if __name__ == "__main__":
     parser.add_argument('--config', default='config.yml', help='Path to configuration file')
     args = parser.parse_args()
     
-    # Load configuration
-    with open(args.config, 'r') as f:
-        config = yaml.safe_load(f)
+    # Load configuration with environment-specific overrides
+    from src.config_utils import load_config_with_environment
+    config = load_config_with_environment(args.config)
     
     # Configure logging
     logging.basicConfig(

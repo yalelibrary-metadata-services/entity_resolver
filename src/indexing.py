@@ -463,9 +463,9 @@ def main(config_path: str = 'config.yml'):
     import pickle
     import os
     
-    # Load configuration
-    with open(config_path, 'r') as f:
-        config = yaml.safe_load(f)
+    # Load configuration with environment-specific overrides
+    from src.config_utils import load_config_with_environment
+    config = load_config_with_environment(config_path)
     
     # Load string dictionary
     checkpoint_dir = config.get("checkpoint_dir", "data/checkpoints")
