@@ -43,7 +43,7 @@ def check_weaviate_count(config):
             return
             
         # Check if EntityString collection exists
-        if not client.collections.exists("EntityString"):
+        if not client.collections.get("EntityString"):
             print("ℹ️  EntityString collection does not exist")
             return
             
