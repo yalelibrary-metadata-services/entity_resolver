@@ -7,6 +7,7 @@ import os
 import sys
 import yaml
 import weaviate
+import urllib.parse
 
 def load_config(config_path: str = "config.yml"):
     """Load configuration from file."""
@@ -17,17 +18,69 @@ def load_config(config_path: str = "config.yml"):
         print(f"❌ Error loading config: {e}")
         sys.exit(1)
 
-def check_weaviate_count(config):
-    """Check the number of objects in EntityString collection."""
+def _init_weaviate_client(config):
+    """Initialize Weaviate client following the same pattern as existing modules."""
+    # Get Weaviate connection parameters
+    weaviate_url = config.get("weaviate_url", "http://localhost:8080")
+    
+    # Extract host and port information
+    parsed_url = urllib.parse.urlparse(weaviate_url)
+    
+    # Extract host (without protocol)
+    host = parsed_url.netloc
+    if ':' in host:
+        host, port_str = host.split(':', 1)
+        port = int(port_str)
+    else:
+        port = 8080  # Default HTTP port
+    
+    # Determine if secure connection (HTTPS)
+    secure = parsed_url.scheme == 'https'
+    
+    # Default gRPC port is typically 50051
+    grpc_port = config.get("weaviate_grpc_port", 50051)
+    
+    # Create API key authentication if provided
+    auth_client_secret = None
+    api_key = config.get("weaviate_api_key")
+    if api_key:
+        from weaviate.auth import AuthApiKey
+        auth_client_secret = AuthApiKey(api_key)
+    
     try:
-        # Get Weaviate connection details from config
-        weaviate_config = config.get('weaviate', {})
-        url = weaviate_config.get('url', 'http://localhost:8080')
+        # Create connection parameters
+        from weaviate.connect import ConnectionParams
+        connection_params = ConnectionParams.from_params(
+            http_host=host,
+            http_port=port,
+            http_secure=secure,
+            grpc_host=host,  # Using same host for gRPC
+            grpc_port=grpc_port,
+            grpc_secure=secure  # Using same security setting for gRPC
+        )
         
-        print(f"🔗 Connecting to Weaviate at: {url}")
+        # Initialize client
+        client = weaviate.WeaviateClient(
+            connection_params=connection_params,
+            auth_client_secret=auth_client_secret
+        )
         
         # Connect to Weaviate
-        client = weaviate.Client(url=url)
+        client.connect()
+        
+        print(f"🔗 Connected to Weaviate at {weaviate_url}")
+        return client
+        
+    except Exception as e:
+        print(f"❌ Error connecting to Weaviate: {e}")
+        raise
+
+def check_weaviate_count(config):
+    """Check the number of objects in EntityString collection."""
+    client = None
+    try:
+        # Initialize Weaviate client
+        client = _init_weaviate_client(config)
         
         # Check if collection exists
         try:
@@ -49,12 +102,16 @@ def check_weaviate_count(config):
             else:
                 print(f"❌ Error accessing collection: {collection_error}")
         
-        # Close connection
-        client.close()
-        
     except Exception as e:
-        print(f"❌ Error connecting to Weaviate: {e}")
+        print(f"❌ Error: {e}")
         sys.exit(1)
+    finally:
+        # Close connection
+        if client:
+            try:
+                client.close()
+            except:
+                pass
 
 def main():
     """Main function."""
