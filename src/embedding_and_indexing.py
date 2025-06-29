@@ -59,9 +59,29 @@ class EmbeddingAndIndexingPipeline:
         self.batch_size = config.get("embedding_batch_size", 32)
         self.max_tokens_per_minute = config.get("max_tokens_per_minute", 5_000_000)
         self.max_requests_per_minute = config.get("max_requests_per_minute", 10_000)
+        self.max_tokens_per_day = config.get("max_tokens_per_day", 500_000_000)  # 500M TPD limit
+        
+        # Current rate limiting counters
         self.tokens_this_minute = 0
         self.requests_this_minute = 0
         self.minute_start = time.time()
+        
+        # Daily rate limiting with persistent state
+        self.tokens_today = 0
+        self.day_start = None
+        self.tpd_poll_interval = config.get("tpd_poll_interval", 1800)  # 30 minutes
+        self.tpd_resume_threshold = config.get("tpd_resume_threshold", 100_000_000)  # 100M tokens
+        
+        # API header tracking for real-time rate limit monitoring
+        self.last_api_headers = {}
+        self.api_rate_limit_info = {
+            'remaining_requests': None,
+            'remaining_tokens': None,
+            'reset_requests': None,
+            'reset_tokens': None,
+            'limit_requests': None,
+            'limit_tokens': None
+        }
         
         # Embedding fields configuration
         self.embed_fields = config.get("embed_fields", ["composite", "person", "title"])
@@ -75,6 +95,13 @@ class EmbeddingAndIndexingPipeline:
         
         # Initialize checkpoint tracking
         self.processed_hashes = set()
+        
+        # Failed request tracking for batch migration support
+        self.failed_requests = {}  # hash_value -> failure_info
+        self.retry_queue = []  # List of hashes to retry
+        
+        # Load daily token usage tracking
+        self._load_daily_usage_checkpoint()
         
         logger.info(f"Initialized EmbeddingAndIndexingPipeline with model {self.embedding_model}")
     
@@ -204,6 +231,296 @@ class EmbeddingAndIndexingPipeline:
             logger.error(f"Error creating Weaviate schema: {str(e)}")
             raise
     
+    def _load_daily_usage_checkpoint(self) -> None:
+        """
+        Load daily token usage tracking from checkpoint file.
+        """
+        checkpoint_dir = self.config.get("checkpoint_dir", "data/checkpoints")
+        daily_usage_path = os.path.join(checkpoint_dir, 'daily_token_usage.json')
+        
+        try:
+            if os.path.exists(daily_usage_path):
+                with open(daily_usage_path, 'r') as f:
+                    usage_data = json.load(f)
+                
+                # Check if it's the same day
+                saved_day_start = usage_data.get('day_start')
+                current_time = time.time()
+                
+                if saved_day_start:
+                    # Check if we're in the same day (within 24 hours)
+                    if current_time - saved_day_start < 86400:  # 24 hours
+                        self.tokens_today = usage_data.get('tokens_today', 0)
+                        self.day_start = saved_day_start
+                        logger.info(f"Loaded daily usage: {self.tokens_today:,} tokens used today")
+                    else:
+                        # New day, reset counters
+                        self.tokens_today = 0
+                        self.day_start = current_time
+                        logger.info("New day detected, reset daily token usage")
+                else:
+                    # No valid day_start, treat as new day
+                    self.tokens_today = 0
+                    self.day_start = current_time
+            else:
+                # No checkpoint file, start fresh
+                self.tokens_today = 0
+                self.day_start = time.time()
+                logger.info("No daily usage checkpoint found, starting fresh")
+                
+        except Exception as e:
+            logger.error(f"Error loading daily usage checkpoint: {e}")
+            # Fall back to fresh start
+            self.tokens_today = 0
+            self.day_start = time.time()
+    
+    def _save_daily_usage_checkpoint(self) -> None:
+        """
+        Save daily token usage tracking to checkpoint file.
+        """
+        checkpoint_dir = self.config.get("checkpoint_dir", "data/checkpoints")
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        daily_usage_path = os.path.join(checkpoint_dir, 'daily_token_usage.json')
+        
+        try:
+            usage_data = {
+                'tokens_today': self.tokens_today,
+                'day_start': self.day_start,
+                'last_updated': time.time()
+            }
+            
+            with open(daily_usage_path, 'w') as f:
+                json.dump(usage_data, f, indent=2)
+                
+        except Exception as e:
+            logger.error(f"Error saving daily usage checkpoint: {e}")
+    
+    def _parse_api_headers(self, response) -> None:
+        """
+        Parse OpenAI API response headers for rate limit information.
+        
+        Args:
+            response: OpenAI API response object
+        """
+        if hasattr(response, '_response') and hasattr(response._response, 'headers'):
+            headers = response._response.headers
+            
+            # Parse rate limit headers
+            self.api_rate_limit_info.update({
+                'remaining_requests': self._parse_header_int(headers.get('x-ratelimit-remaining-requests')),
+                'remaining_tokens': self._parse_header_int(headers.get('x-ratelimit-remaining-tokens')),
+                'reset_requests': headers.get('x-ratelimit-reset-requests'),
+                'reset_tokens': headers.get('x-ratelimit-reset-tokens'),
+                'limit_requests': self._parse_header_int(headers.get('x-ratelimit-limit-requests')),
+                'limit_tokens': self._parse_header_int(headers.get('x-ratelimit-limit-tokens'))
+            })
+            
+            # Store full headers for debugging
+            self.last_api_headers = dict(headers)
+            
+            logger.debug(f"API Rate Limits - Tokens: {self.api_rate_limit_info['remaining_tokens']}/{self.api_rate_limit_info['limit_tokens']}, "
+                        f"Requests: {self.api_rate_limit_info['remaining_requests']}/{self.api_rate_limit_info['limit_requests']}")
+    
+    def _parse_header_int(self, value: str) -> Optional[int]:
+        """
+        Parse header value as integer, return None if invalid.
+        
+        Args:
+            value: Header value string
+            
+        Returns:
+            Parsed integer or None
+        """
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return None
+    
+    def _check_daily_rate_limit(self) -> bool:
+        """
+        Check if daily token limit has been reached.
+        
+        Returns:
+            True if under limit, False if limit reached
+        """
+        # Reset daily counter if new day
+        current_time = time.time()
+        if self.day_start and current_time - self.day_start >= 86400:  # 24 hours
+            self.tokens_today = 0
+            self.day_start = current_time
+            self._save_daily_usage_checkpoint()
+            logger.info("Daily token usage reset for new day")
+        
+        # Check if we're under the daily limit
+        return self.tokens_today < self.max_tokens_per_day
+    
+    def _wait_for_daily_limit_reset(self) -> None:
+        """
+        Wait for daily token limit to reset with periodic polling.
+        Uses 30-minute polling intervals and resumes when >100M tokens available.
+        """
+        logger.warning(f"Daily token limit reached ({self.tokens_today:,}/{self.max_tokens_per_day:,}). "
+                      f"Entering polling mode with {self.tpd_poll_interval/60:.0f}-minute intervals")
+        
+        while True:
+            # Wait for polling interval
+            logger.info(f"Waiting {self.tpd_poll_interval/60:.0f} minutes before checking daily limit...")
+            time.sleep(self.tpd_poll_interval)
+            
+            # Check if daily limit has reset (new day)
+            if self._check_daily_rate_limit():
+                remaining_tokens = self.max_tokens_per_day - self.tokens_today
+                if remaining_tokens >= self.tpd_resume_threshold:
+                    logger.info(f"Daily limit reset detected. Resuming processing with {remaining_tokens:,} tokens available")
+                    break
+                else:
+                    logger.info(f"Daily limit reset but only {remaining_tokens:,} tokens available (need {self.tpd_resume_threshold:,}). Continuing to wait...")
+            else:
+                logger.info(f"Daily limit still active. Used: {self.tokens_today:,}/{self.max_tokens_per_day:,} tokens")
+    
+    def _load_migrated_failed_requests(self) -> None:
+        """
+        Load failed requests migrated from batch processing.
+        """
+        checkpoint_dir = self.config.get("checkpoint_dir", "data/checkpoints")
+        migrated_failed_path = os.path.join(checkpoint_dir, 'realtime_failed_requests.pkl')
+        
+        if os.path.exists(migrated_failed_path):
+            try:
+                with open(migrated_failed_path, 'rb') as f:
+                    self.failed_requests = pickle.load(f)
+                
+                # Filter out already processed hashes
+                retryable_count = 0
+                for hash_value, failure_info in self.failed_requests.items():
+                    if hash_value not in self.processed_hashes:
+                        # Check if this request is retryable
+                        max_retries = self.config.get("error_handling", {}).get("max_retry_attempts", 3)
+                        retry_count = failure_info.get('retry_count', 0)
+                        error_category = failure_info.get('error_category', 'other')
+                        
+                        # Skip permanent errors like validation failures
+                        if error_category != 'validation' and retry_count < max_retries:
+                            self.retry_queue.append(hash_value)
+                            retryable_count += 1
+                
+                logger.info(f"Loaded {len(self.failed_requests)} migrated failed requests, "
+                           f"{retryable_count} are retryable")
+                           
+            except Exception as e:
+                logger.error(f"Error loading migrated failed requests: {e}")
+                self.failed_requests = {}
+        else:
+            logger.debug("No migrated failed requests found")
+    
+    def _save_failed_requests_checkpoint(self) -> None:
+        """
+        Save failed requests to checkpoint file.
+        """
+        if not self.failed_requests:
+            return
+            
+        checkpoint_dir = self.config.get("checkpoint_dir", "data/checkpoints")
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        failed_requests_path = os.path.join(checkpoint_dir, 'realtime_failed_requests.pkl')
+        
+        try:
+            with open(failed_requests_path, 'wb') as f:
+                pickle.dump(self.failed_requests, f)
+                
+            logger.debug(f"Saved {len(self.failed_requests)} failed requests to checkpoint")
+            
+        except Exception as e:
+            logger.error(f"Error saving failed requests checkpoint: {e}")
+    
+    def _add_failed_request(self, hash_value: str, field_type: str, error_info: Dict[str, Any]) -> None:
+        """
+        Add a failed request to tracking.
+        
+        Args:
+            hash_value: Hash of the failed request
+            field_type: Field type being processed
+            error_info: Error information from API
+        """
+        if hash_value not in self.failed_requests:
+            self.failed_requests[hash_value] = {
+                'field_type': field_type,
+                'error_info': error_info,
+                'retry_count': 0,
+                'first_attempt': time.time(),
+                'last_attempt': time.time(),
+                'error_category': self._categorize_realtime_error(error_info),
+                'migrated_from_batch': False
+            }
+        else:
+            # Update existing failed request
+            self.failed_requests[hash_value]['retry_count'] += 1
+            self.failed_requests[hash_value]['last_attempt'] = time.time()
+            self.failed_requests[hash_value]['error_info'] = error_info
+    
+    def _categorize_realtime_error(self, error_info: Dict[str, Any]) -> str:
+        """
+        Categorize error for retry logic.
+        
+        Args:
+            error_info: Error information
+            
+        Returns:
+            Error category string
+        """
+        error_msg = str(error_info).lower()
+        
+        if 'rate limit' in error_msg or 'rate_limit' in error_msg:
+            return 'rate_limit'
+        elif 'quota' in error_msg or 'insufficient' in error_msg:
+            return 'quota'
+        elif 'invalid' in error_msg or 'validation' in error_msg:
+            return 'validation'
+        elif 'server' in error_msg or 'internal' in error_msg or 'timeout' in error_msg:
+            return 'server'
+        else:
+            return 'other'
+    
+    def _get_retry_requests(self, string_dict: Dict[str, str], field_hash_mapping: Dict[str, Dict[str, int]],
+                          string_counts: Dict[str, int]) -> List[Tuple[str, str, str, int]]:
+        """
+        Get retry requests from the retry queue.
+        
+        Args:
+            string_dict: Hash to string mapping
+            field_hash_mapping: Hash to field mapping
+            string_counts: Hash to frequency mapping
+            
+        Returns:
+            List of (hash, string, field_type, frequency) tuples for retry
+        """
+        retry_requests = []
+        
+        for hash_value in self.retry_queue[:]:
+            if hash_value in self.failed_requests and hash_value not in self.processed_hashes:
+                failure_info = self.failed_requests[hash_value]
+                
+                # Check if we have the required data for retry
+                if hash_value in string_dict:
+                    string_value = string_dict[hash_value]
+                    field_type = failure_info.get('field_type', 'composite')
+                    frequency = string_counts.get(hash_value, 1)
+                    
+                    retry_requests.append((hash_value, string_value, field_type, frequency))
+                    
+                    # Remove from retry queue (will be re-added if it fails again)
+                    self.retry_queue.remove(hash_value)
+                else:
+                    logger.warning(f"Cannot retry hash {hash_value} - string data not found")
+                    self.retry_queue.remove(hash_value)
+        
+        if retry_requests:
+            logger.info(f"Prepared {len(retry_requests)} failed requests for retry")
+            
+        return retry_requests
+    
     @retry(
         wait=wait_exponential(multiplier=1, min=4, max=60),
         stop=stop_after_attempt(5),
@@ -227,6 +544,9 @@ class EmbeddingAndIndexingPipeline:
                 input=texts
             )
             
+            # Parse API headers for rate limit monitoring
+            self._parse_api_headers(response)
+            
             # Extract embeddings and token count
             embeddings = []
             for embedding_data in response.data:
@@ -237,13 +557,17 @@ class EmbeddingAndIndexingPipeline:
             token_count = response.usage.total_tokens
             token_counts = [token_count // len(texts)] * len(texts)  # Distribute evenly
             
-            logger.debug(f"Generated {len(embeddings)} embeddings using {token_count} tokens")
+            # Update daily token usage
+            self.tokens_today += token_count
+            
+            logger.debug(f"Generated {len(embeddings)} embeddings using {token_count} tokens "
+                        f"(daily total: {self.tokens_today:,}/{self.max_tokens_per_day:,})")
             
             return embeddings, token_counts
             
         except Exception as e:
             logger.error(f"Error generating embeddings via OpenAI client: {str(e)}")
-            # Re-raise to trigger retry
+            # Re-raise to trigger retry - failed requests will be tracked at higher level
             raise requests.exceptions.RequestException(f"OpenAI API error: {str(e)}")
 
     
@@ -267,7 +591,8 @@ class EmbeddingAndIndexingPipeline:
         try:
             # Initialize diagnostic tool
             diagnostics = VectorDiagnosticTool(self.weaviate_client, {
-                "embedding_dimensions": self.embedding_dimensions
+                "embedding_dimensions": self.embedding_dimensions,
+                "vector_diagnostics_verbose": self.config.get("vector_diagnostics_verbose", True)
             })
             
             # Select verification samples
@@ -343,7 +668,18 @@ class EmbeddingAndIndexingPipeline:
         Returns:
             Tuple of (indexed_count, tokens_used)
         """
-        # Rate limit enforcement
+        # Enhanced rate limit enforcement with TPD checking
+        with lock:
+            # Check daily token limit first (highest priority)
+            if not self._check_daily_rate_limit():
+                logger.info(f"Daily token limit reached ({self.tokens_today:,}/{self.max_tokens_per_day:,})")
+                # Release lock before waiting to avoid blocking other threads
+                
+        # Wait for daily limit reset outside of lock to avoid deadlock
+        if not self._check_daily_rate_limit():
+            self._wait_for_daily_limit_reset()
+        
+        # Per-minute rate limit enforcement
         current_time = time.time()
         with lock:
             if current_time - self.minute_start >= 60:
@@ -356,7 +692,7 @@ class EmbeddingAndIndexingPipeline:
                 # Sleep until the next minute starts
                 sleep_time = 60 - (current_time - self.minute_start)
                 if sleep_time > 0:
-                    logger.info(f"Rate limit reached, sleeping for {sleep_time:.2f} seconds")
+                    logger.info(f"Per-minute rate limit reached, sleeping for {sleep_time:.2f} seconds")
                     time.sleep(sleep_time)
                     self.tokens_this_minute = 0
                     self.requests_this_minute = 0
@@ -400,6 +736,13 @@ class EmbeddingAndIndexingPipeline:
             
         except Exception as e:
             logger.error(f"Error in batch processing: {str(e)}")
+            
+            # Track failed requests for retry
+            with lock:
+                for i, hash_val in enumerate(hashes):
+                    if hash_val not in self.processed_hashes:  # Only track if not already processed
+                        self._add_failed_request(hash_val, field_types[i], {'error': str(e)})
+                        
             return 0, 0
     
     def _process_batches_parallel(self, texts_to_process: List[Tuple[str, str, str, int]], 
@@ -529,9 +872,18 @@ class EmbeddingAndIndexingPipeline:
                         string_counts.get(hash_val, 1)
                     ))
         
+        # Add retry requests from migrated failed batch processing
+        retry_requests = self._get_retry_requests(string_dict, field_hash_mapping, string_counts)
+        strings_to_process.extend(retry_requests)
+        
         # Log selection statistics
         selected_count = len(strings_to_process)
-        logger.info(f"Selected {selected_count} string-field pairs to process")
+        retry_count = len(retry_requests)
+        new_count = selected_count - retry_count
+        
+        logger.info(f"Selected {selected_count} string-field pairs to process:")
+        logger.info(f"  New strings: {new_count}")
+        logger.info(f"  Retry requests: {retry_count}")
         logger.info(f"Processing status: {already_processed}/{total_candidates} strings already processed ({cache_coverage:.1%})")
         
         # Log field type distribution 
@@ -539,6 +891,135 @@ class EmbeddingAndIndexingPipeline:
             logger.info(f"  Field '{field}': {count} strings selected")
         
         return strings_to_process
+    
+    def get_processing_status(self) -> Dict[str, Any]:
+        """
+        Get comprehensive processing status similar to batch processing.
+        
+        Returns:
+            Dictionary with detailed status information
+        """
+        status = {
+            'timestamp': time.time(),
+            'processed_hashes': len(self.processed_hashes),
+            'failed_requests': len(self.failed_requests),
+            'retry_queue': len(self.retry_queue),
+            'daily_token_usage': {
+                'tokens_used': self.tokens_today,
+                'tokens_limit': self.max_tokens_per_day,
+                'usage_percentage': (self.tokens_today / self.max_tokens_per_day * 100) if self.max_tokens_per_day > 0 else 0,
+                'day_start': self.day_start
+            },
+            'rate_limits': {
+                'tokens_per_minute': {
+                    'current': self.tokens_this_minute,
+                    'limit': self.max_tokens_per_minute,
+                    'usage_percentage': (self.tokens_this_minute / self.max_tokens_per_minute * 100) if self.max_tokens_per_minute > 0 else 0
+                },
+                'requests_per_minute': {
+                    'current': self.requests_this_minute,
+                    'limit': self.max_requests_per_minute,
+                    'usage_percentage': (self.requests_this_minute / self.max_requests_per_minute * 100) if self.max_requests_per_minute > 0 else 0
+                }
+            },
+            'api_rate_limit_info': self.api_rate_limit_info.copy(),
+            'failed_request_analysis': self._analyze_failed_requests(),
+            'processing_mode': 'real-time'
+        }
+        
+        return status
+    
+    def _analyze_failed_requests(self) -> Dict[str, Any]:
+        """
+        Analyze failed requests similar to batch processing.
+        
+        Returns:
+            Dictionary with failure analysis
+        """
+        if not self.failed_requests:
+            return {
+                'total_failed': 0,
+                'by_category': {},
+                'retryable': 0,
+                'max_retries_exceeded': 0
+            }
+        
+        analysis = {
+            'total_failed': len(self.failed_requests),
+            'by_category': {},
+            'by_retry_count': {},
+            'retryable': 0,
+            'max_retries_exceeded': 0
+        }
+        
+        max_retry_attempts = self.config.get("error_handling", {}).get("max_retry_attempts", 3)
+        
+        for hash_value, failure_data in self.failed_requests.items():
+            category = failure_data.get('error_category', 'other')
+            retry_count = failure_data.get('retry_count', 0)
+            
+            # Count by category
+            analysis['by_category'][category] = analysis['by_category'].get(category, 0) + 1
+            
+            # Count by retry attempts
+            analysis['by_retry_count'][retry_count] = analysis['by_retry_count'].get(retry_count, 0) + 1
+            
+            # Count retryable vs max retries exceeded
+            if category != 'validation' and retry_count < max_retry_attempts:
+                analysis['retryable'] += 1
+            else:
+                analysis['max_retries_exceeded'] += 1
+        
+        return analysis
+    
+    def print_status_report(self) -> None:
+        """
+        Print detailed status report similar to batch processing.
+        """
+        status = self.get_processing_status()
+        
+        print("\n" + "="*60)
+        print("REAL-TIME PROCESSING STATUS")
+        print("="*60)
+        
+        # Processing statistics
+        print(f"Processed Hashes: {status['processed_hashes']:,}")
+        print(f"Failed Requests: {status['failed_requests']:,}")
+        print(f"Retry Queue: {status['retry_queue']:,}")
+        
+        # Daily usage
+        daily = status['daily_token_usage']
+        print(f"\n📊 DAILY TOKEN USAGE:")
+        print(f"   Used: {daily['tokens_used']:,}/{daily['tokens_limit']:,} ({daily['usage_percentage']:.1f}%)")
+        
+        # Rate limits
+        rate_limits = status['rate_limits']
+        tpm = rate_limits['tokens_per_minute']
+        rpm = rate_limits['requests_per_minute']
+        print(f"\n⏱️  RATE LIMITS:")
+        print(f"   Tokens/min: {tpm['current']:,}/{tpm['limit']:,} ({tpm['usage_percentage']:.1f}%)")
+        print(f"   Requests/min: {rpm['current']:,}/{rpm['limit']:,} ({rpm['usage_percentage']:.1f}%)")
+        
+        # API rate limit info from headers
+        api_info = status['api_rate_limit_info']
+        if api_info['remaining_tokens'] is not None:
+            print(f"\n🔗 API RATE LIMITS (from headers):")
+            print(f"   Remaining tokens: {api_info['remaining_tokens']:,}")
+            print(f"   Remaining requests: {api_info['remaining_requests']:,}")
+            print(f"   Reset time (tokens): {api_info['reset_tokens']}")
+        
+        # Failed request analysis
+        failed_analysis = status['failed_request_analysis']
+        if failed_analysis['total_failed'] > 0:
+            print(f"\n❌ FAILED REQUEST ANALYSIS:")
+            print(f"   Total failed: {failed_analysis['total_failed']:,}")
+            print(f"   Retryable: {failed_analysis['retryable']:,}")
+            print(f"   Max retries exceeded: {failed_analysis['max_retries_exceeded']:,}")
+            
+            if failed_analysis['by_category']:
+                print(f"   By category:")
+                for category, count in failed_analysis['by_category'].items():
+                    print(f"     • {category}: {count:,}")
     
     def load_checkpoint(self, checkpoint_dir: str) -> None:
         """
@@ -556,6 +1037,9 @@ class EmbeddingAndIndexingPipeline:
                     self.processed_hashes = set(pickle.load(f))
                     
                 logger.info(f"Loaded checkpoint with {len(self.processed_hashes)} processed hashes")
+                
+                # Load migrated failed requests
+                self._load_migrated_failed_requests()
                 
             except Exception as e:
                 logger.error(f"Error loading checkpoint: {str(e)}")
@@ -580,8 +1064,15 @@ class EmbeddingAndIndexingPipeline:
         try:
             with open(processed_hashes_path, 'wb') as f:
                 pickle.dump(list(self.processed_hashes), f)
+            
+            # Save daily usage tracking
+            self._save_daily_usage_checkpoint()
+            
+            # Save failed requests if any
+            self._save_failed_requests_checkpoint()
                 
-            logger.info(f"Saved checkpoint with {len(self.processed_hashes)} processed hashes")
+            logger.info(f"Saved checkpoint with {len(self.processed_hashes)} processed hashes, "
+                       f"{len(self.failed_requests)} failed requests, and daily usage ({self.tokens_today:,} tokens)")
             
         except Exception as e:
             logger.error(f"Error saving checkpoint: {str(e)}")
@@ -666,33 +1157,73 @@ class EmbeddingAndIndexingPipeline:
                 batch_time = time.time() - batch_start_time
                 items_per_sec = indexed_count / batch_time if batch_time > 0 else 0
                 
-                # Update progress bar with metrics
+                # Enhanced progress metrics
+                daily_usage_pct = (self.tokens_today / self.max_tokens_per_day * 100) if self.max_tokens_per_day > 0 else 0
+                failed_count = len(self.failed_requests)
+                retry_count = len(self.retry_queue)
+                
+                # Update progress bar with enhanced metrics
                 pbar.set_postfix({
                     "indexed": total_processed, 
                     "tokens": total_tokens,
-                    "rate": f"{items_per_sec:.1f}/s"
+                    "rate": f"{items_per_sec:.1f}/s",
+                    "daily": f"{daily_usage_pct:.1f}%",
+                    "failed": failed_count,
+                    "retry": retry_count
                 })
                 
                 # Save checkpoint
                 self.save_checkpoint(checkpoint_dir)
                 
-                # Log detailed progress 
+                # Enhanced detailed progress logging 
                 progress_pct = total_processed / len(strings_to_process) * 100
+                daily_usage_pct = (self.tokens_today / self.max_tokens_per_day * 100) if self.max_tokens_per_day > 0 else 0
+                failed_count = len(self.failed_requests)
+                retry_count = len(self.retry_queue)
+                
                 logger.info(f"\n{'='*30} CHECKPOINT SUMMARY {'='*30}")
                 logger.info(f"Processed batch of {len(batch)} strings in {batch_time:.2f}s ({items_per_sec:.2f} items/sec)")
                 logger.info(f"Progress: {total_processed}/{len(strings_to_process)} strings ({progress_pct:.2f}%)")
+                
                 if indexed_count > 0:
-                    logger.info(f"Tokens used: {tokens_used} ({tokens_used/indexed_count:.1f} per item)")
+                    logger.info(f"Tokens used this batch: {tokens_used} ({tokens_used/indexed_count:.1f} per item)")
                 else:
-                    logger.info(f"Tokens used: {tokens_used} (N/A per item)")
+                    logger.info(f"Tokens used this batch: {tokens_used} (N/A per item)")
+                
+                logger.info(f"Daily token usage: {self.tokens_today:,}/{self.max_tokens_per_day:,} ({daily_usage_pct:.1f}%)")
+                
+                if failed_count > 0:
+                    logger.info(f"Failed requests: {failed_count:,} total, {retry_count:,} in retry queue")
+                    
+                    # Show failure breakdown
+                    failed_analysis = self._analyze_failed_requests()
+                    if failed_analysis['by_category']:
+                        category_str = ", ".join([f"{cat}: {count}" for cat, count in failed_analysis['by_category'].items()])
+                        logger.info(f"Failure categories: {category_str}")
+                
+                # Log rate limit status
+                tpm_pct = (self.tokens_this_minute / self.max_tokens_per_minute * 100) if self.max_tokens_per_minute > 0 else 0
+                rpm_pct = (self.requests_this_minute / self.max_requests_per_minute * 100) if self.max_requests_per_minute > 0 else 0
+                logger.info(f"Rate limits: {tpm_pct:.1f}% TPM, {rpm_pct:.1f}% RPM")
         
         elapsed_time = time.time() - start_time
         overall_throughput = total_processed / elapsed_time if elapsed_time > 0 else 0
         
+        # Enhanced completion summary
+        daily_usage_pct = (self.tokens_today / self.max_tokens_per_day * 100) if self.max_tokens_per_day > 0 else 0
+        failed_count = len(self.failed_requests)
+        
         logger.info(f"\n{'='*30} PROCESS COMPLETE {'='*30}")
-        logger.info(f"Embedding and indexing completed in {elapsed_time:.2f} seconds")
+        logger.info(f"Real-time embedding and indexing completed in {elapsed_time:.2f} seconds")
         logger.info(f"Processed {total_processed} strings using {total_tokens} tokens")
         logger.info(f"Overall throughput: {overall_throughput:.2f} items/sec")
+        logger.info(f"Daily token usage: {self.tokens_today:,}/{self.max_tokens_per_day:,} ({daily_usage_pct:.1f}%)")
+        
+        if failed_count > 0:
+            failed_analysis = self._analyze_failed_requests()
+            logger.info(f"Failed requests: {failed_count:,} total, {failed_analysis['retryable']:,} retryable")
+        else:
+            logger.info("No failed requests - all processing completed successfully")
         
         # Get collection stats
         try:
@@ -704,14 +1235,29 @@ class EmbeddingAndIndexingPipeline:
             logger.error(f"Error getting collection stats: {str(e)}")
             collection_count = None
         
-        # Return metrics without closing the client here (it's closed in the parent function)
+        # Enhanced return metrics similar to batch processing
+        failed_analysis = self._analyze_failed_requests()
+        
         return {
             'status': 'completed',
             'elapsed_time': elapsed_time,
             'strings_processed': total_processed,
             'tokens_used': total_tokens,
             'collection_count': collection_count,
-            'throughput': overall_throughput
+            'throughput': overall_throughput,
+            'daily_token_usage': {
+                'tokens_used': self.tokens_today,
+                'tokens_limit': self.max_tokens_per_day,
+                'usage_percentage': (self.tokens_today / self.max_tokens_per_day * 100) if self.max_tokens_per_day > 0 else 0
+            },
+            'failed_requests': {
+                'total_failed': len(self.failed_requests),
+                'retryable': failed_analysis['retryable'],
+                'max_retries_exceeded': failed_analysis['max_retries_exceeded'],
+                'by_category': failed_analysis['by_category']
+            },
+            'processing_mode': 'real-time',
+            'migrated_from_batch': len([f for f in self.failed_requests.values() if f.get('migrated_from_batch', False)]) > 0
         }
 
 def embedding_and_indexing(config: Dict[str, Any], string_dict: Dict[str, str], 

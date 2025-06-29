@@ -17,6 +17,7 @@ classified_data_path: "data/input/training/training_dataset_classified_2025-06-2
 # Pipeline Configuration
 log_level: "INFO"
 debug_features: false
+vector_diagnostics_verbose: false
 embed_fields: ["composite", "person", "title", "roles", "subjects", "genres"]
 skip_fields: ["attribution", "provision", "relatedWork", "recordId", "personId"]
 
@@ -78,6 +79,9 @@ embedding_model: "text-embedding-3-small"
 embedding_dimensions: 1536
 max_tokens_per_minute: 5000000
 max_requests_per_minute: 10000
+max_tokens_per_day: 500000000         # 500M daily token limit
+tpd_poll_interval: 1800               # 30 minutes polling when TPD limit reached
+tpd_resume_threshold: 100000000       # Resume when >100M tokens available
 
 # Batch Processing Configuration
 use_batch_embeddings: true  # Set to true to use OpenAI Batch API (50% cost savings, 24h turnaround)
@@ -92,6 +96,35 @@ use_automated_queue: true           # Enable automated 16-batch queue system
 max_active_batches: 16              # Maximum concurrent batches (default: 16)  
 queue_poll_interval: 1800           # 30 minutes between status checks (default: 1800)
 request_quota_limit: 800000         # Conservative 800K request limit (80% of 1M)
+
+# Error Handling Configuration
+error_handling:
+  # Retry Configuration
+  max_retry_attempts: 3              # Maximum retry attempts for failed individual requests
+  enable_automatic_retries: true     # Enable automatic retry batch creation
+  retry_batch_creation: true         # Create retry batches during automated queue processing
+  
+  # Exponential Backoff Settings
+  initial_retry_delay: 300           # Initial delay between retries (5 minutes)
+  max_retry_delay: 3600              # Maximum delay between retries (1 hour)
+  backoff_multiplier: 2              # Exponential backoff multiplier
+  
+  # Error Categorization
+  retryable_error_types:             # Error types that should be retried
+    - "rate_limit"
+    - "server"
+    - "quota"                        # Only if quota is temporarily exceeded
+  
+  permanent_error_types:             # Error types that should not be retried
+    - "validation"                   # Invalid request format - won't succeed on retry
+  
+  # Error Reporting
+  enable_detailed_error_reporting: true  # Show detailed error analysis in status reports
+  max_sample_errors: 10              # Maximum number of sample errors to collect per batch
+  
+  # Cleanup Configuration
+  cleanup_successful_retries: true   # Remove successfully retried requests from failed tracking
+  preserve_error_history: false      # Keep error history for successfully retried requests
 
 # Weaviate Configuration - Environment-specific
 

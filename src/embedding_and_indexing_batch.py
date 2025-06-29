@@ -124,6 +124,37 @@ class BatchEmbeddingPipeline:
         self.processed_hashes = set()
         self.blacklisted_files = set()  # input_file_ids to avoid reprocessing
         
+        # Failed request tracking and retry system
+        self.failed_requests = {}  # custom_id -> {error_info, retry_count, last_attempt}
+        
+        # Error handling configuration
+        error_config = config.get("error_handling", {})
+        self.max_retry_attempts = error_config.get("max_retry_attempts", 3)
+        self.enable_automatic_retries = error_config.get("enable_automatic_retries", True)
+        self.retry_batch_creation = error_config.get("retry_batch_creation", True)
+        self.initial_retry_delay = error_config.get("initial_retry_delay", 300)
+        self.max_retry_delay = error_config.get("max_retry_delay", 3600)
+        self.backoff_multiplier = error_config.get("backoff_multiplier", 2)
+        self.enable_detailed_error_reporting = error_config.get("enable_detailed_error_reporting", True)
+        self.max_sample_errors = error_config.get("max_sample_errors", 10)
+        self.cleanup_successful_retries_enabled = error_config.get("cleanup_successful_retries", True)
+        
+        # Error categorization with configurable retry behavior
+        retryable_types = error_config.get("retryable_error_types", ["rate_limit", "server", "quota"])
+        permanent_types = error_config.get("permanent_error_types", ["validation"])
+        
+        self.error_categories = {
+            'rate_limit': ['rate_limit_exceeded', 'rate_limit'],
+            'quota': ['quota_exceeded', 'insufficient_quota'],
+            'validation': ['invalid_request', 'validation_error'],
+            'server': ['internal_error', 'server_error', 'timeout'],
+            'other': []  # catch-all for uncategorized errors
+        }
+        
+        # Store retryable vs permanent categorization
+        self.retryable_categories = set(retryable_types)
+        self.permanent_categories = set(permanent_types)
+        
         logger.info(f"Initialized BatchEmbeddingPipeline with model {self.embedding_model}")
     
     def __enter__(self):
@@ -578,6 +609,9 @@ class BatchEmbeddingPipeline:
                         # Request failed
                         error_info = result.get('error', {})
                         logger.warning(f"Failed request for custom_id {custom_id}: {error_info}")
+                        
+                        # Track failed request for retry
+                        self._track_failed_request(custom_id, error_info)
                         failed_requests += 1
                         
                 except json.JSONDecodeError as e:
@@ -660,6 +694,9 @@ class BatchEmbeddingPipeline:
                         # Request failed
                         error_info = result.get('error', {})
                         logger.warning(f"Failed request for custom_id {custom_id}: {error_info}")
+                        
+                        # Track failed request for retry
+                        self._track_failed_request(custom_id, error_info)
                         failed_requests += 1
                         
                 except json.JSONDecodeError as e:
@@ -672,6 +709,305 @@ class BatchEmbeddingPipeline:
         logger.info(f"Processed batch results (recovered): {successful_requests} successful, {failed_requests} failed")
         logger.warning("Note: Original string values not available for recovered jobs - using placeholders")
         return items_to_index
+    
+    def _track_failed_request(self, custom_id: str, error_info: Dict[str, Any]) -> None:
+        """
+        Track a failed request for retry handling.
+        
+        Args:
+            custom_id: The custom ID of the failed request
+            error_info: Error information from OpenAI response
+        """
+        if custom_id not in self.failed_requests:
+            self.failed_requests[custom_id] = {
+                'error_info': error_info,
+                'retry_count': 0,
+                'first_attempt': time.time(),
+                'last_attempt': time.time(),
+                'error_category': self._categorize_error(error_info)
+            }
+        else:
+            # Update existing failed request
+            self.failed_requests[custom_id]['retry_count'] += 1
+            self.failed_requests[custom_id]['last_attempt'] = time.time()
+            self.failed_requests[custom_id]['error_info'] = error_info  # Update with latest error
+    
+    def _categorize_error(self, error_info: Dict[str, Any]) -> str:
+        """
+        Categorize error based on error information.
+        
+        Args:
+            error_info: Error information from OpenAI
+            
+        Returns:
+            Error category string
+        """
+        error_code = error_info.get('code', '').lower()
+        error_message = error_info.get('message', '').lower()
+        
+        for category, keywords in self.error_categories.items():
+            if category == 'other':
+                continue
+            for keyword in keywords:
+                if keyword in error_code or keyword in error_message:
+                    return category
+        
+        return 'other'
+    
+    def _process_error_file(self, error_file_id: str, job_id: str) -> Dict[str, Any]:
+        """
+        Download and process error file from OpenAI batch job.
+        
+        Args:
+            error_file_id: OpenAI file ID for the error file
+            job_id: Batch job ID for context
+            
+        Returns:
+            Dictionary with error analysis
+        """
+        logger.info(f"Processing error file {error_file_id} for job {job_id}")
+        
+        error_analysis = {
+            'total_errors': 0,
+            'errors_by_category': {},
+            'failed_custom_ids': [],
+            'sample_errors': []
+        }
+        
+        try:
+            # Download error file content
+            error_content = self.openai_client.files.content(error_file_id)
+            error_text = error_content.content.decode('utf-8')
+            
+            # Process each error line
+            for line_num, line in enumerate(error_text.split('\n'), 1):
+                if not line.strip():
+                    continue
+                    
+                try:
+                    error_data = json.loads(line.strip())
+                    custom_id = error_data.get('custom_id')
+                    error_info = error_data.get('error', {})
+                    
+                    if custom_id:
+                        # Track this failed request
+                        self._track_failed_request(custom_id, error_info)
+                        error_analysis['failed_custom_ids'].append(custom_id)
+                        
+                        # Categorize error
+                        category = self._categorize_error(error_info)
+                        error_analysis['errors_by_category'][category] = error_analysis['errors_by_category'].get(category, 0) + 1
+                        
+                        # Keep sample errors (configurable limit)
+                        if len(error_analysis['sample_errors']) < self.max_sample_errors:
+                            error_analysis['sample_errors'].append({
+                                'custom_id': custom_id,
+                                'error': error_info,
+                                'category': category,
+                                'line_number': line_num
+                            })
+                        
+                        error_analysis['total_errors'] += 1
+                        
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Error parsing error file line {line_num}: {e}")
+                    continue
+                    
+            logger.info(f"Processed error file: {error_analysis['total_errors']} errors, "
+                       f"categories: {error_analysis['errors_by_category']}")
+                       
+        except Exception as e:
+            logger.error(f"Error processing error file {error_file_id}: {e}")
+            
+        return error_analysis
+    
+    def get_failed_requests_summary(self) -> Dict[str, Any]:
+        """
+        Get summary of failed requests for reporting.
+        
+        Returns:
+            Dictionary with failure statistics
+        """
+        summary = {
+            'total_failed': len(self.failed_requests),
+            'by_category': {},
+            'by_retry_count': {},
+            'retryable_requests': 0,
+            'max_retries_exceeded': 0
+        }
+        
+        for custom_id, failure_data in self.failed_requests.items():
+            category = failure_data['error_category']
+            retry_count = failure_data['retry_count']
+            
+            # Count by category
+            summary['by_category'][category] = summary['by_category'].get(category, 0) + 1
+            
+            # Count by retry attempts
+            summary['by_retry_count'][retry_count] = summary['by_retry_count'].get(retry_count, 0) + 1
+            
+            # Count retryable vs max retries exceeded
+            if retry_count < self.max_retry_attempts:
+                summary['retryable_requests'] += 1
+            else:
+                summary['max_retries_exceeded'] += 1
+                
+        return summary
+    
+    def get_retryable_failed_requests(self) -> List[Dict[str, Any]]:
+        """
+        Get failed requests that can be retried (haven't exceeded max attempts).
+        
+        Returns:
+            List of failed request data ready for retry
+        """
+        retryable_requests = []
+        
+        for custom_id, failure_data in self.failed_requests.items():
+            # Check if this error type is retryable
+            error_category = failure_data.get('error_category', 'other')
+            if error_category in self.permanent_categories:
+                continue  # Skip permanent errors
+                
+            if failure_data['retry_count'] < self.max_retry_attempts:
+                # Check if enough time has passed for retry (exponential backoff)
+                time_since_last_attempt = time.time() - failure_data['last_attempt']
+                min_wait_time = min(
+                    self.initial_retry_delay * (self.backoff_multiplier ** failure_data['retry_count']), 
+                    self.max_retry_delay
+                )
+                
+                if time_since_last_attempt >= min_wait_time:
+                    retryable_requests.append({
+                        'custom_id': custom_id,
+                        'failure_data': failure_data
+                    })
+        
+        return retryable_requests
+    
+    def create_retry_batch(self, hash_lookup: Dict[str, str], string_dict: Dict[str, str], 
+                          checkpoint_dir: str) -> Optional[str]:
+        """
+        Create a new batch file containing only failed requests that can be retried.
+        
+        Args:
+            hash_lookup: Hash to string mapping
+            string_dict: String dictionary for text lookup
+            checkpoint_dir: Directory for saving batch files
+            
+        Returns:
+            Batch job ID if successful, None otherwise
+        """
+        retryable_requests = self.get_retryable_failed_requests()
+        
+        if not retryable_requests:
+            logger.info("No failed requests are ready for retry")
+            return None
+            
+        logger.info(f"Creating retry batch with {len(retryable_requests)} failed requests")
+        
+        # Prepare batch data for retry
+        retry_batch_data = []
+        custom_id_mapping = {}
+        
+        for request_data in retryable_requests:
+            custom_id = request_data['custom_id']
+            
+            # Parse custom_id to get hash and field info
+            # Format: "hash_{hash_value}_field_{field_type}"
+            try:
+                parts = custom_id.split('_')
+                if len(parts) >= 4 and parts[0] == 'hash' and parts[2] == 'field':
+                    hash_value = parts[1]
+                    field_type = parts[3]
+                    
+                    # Get original text from hash_lookup and string_dict
+                    string_hash = hash_lookup.get(hash_value)
+                    if string_hash and string_hash in string_dict:
+                        original_text = string_dict[string_hash]
+                        
+                        # Add to retry batch
+                        retry_batch_data.append((hash_value, original_text, field_type, 1))  # frequency=1 for retry
+                        
+                        # Create mapping for processing results
+                        custom_id_mapping[custom_id] = {
+                            'hash_value': hash_value,
+                            'original_string': original_text,
+                            'field_type': field_type,
+                            'frequency': 1,
+                            'is_retry': True,
+                            'retry_count': request_data['failure_data']['retry_count'] + 1
+                        }
+                    else:
+                        logger.warning(f"Could not find original text for retry custom_id {custom_id}")
+                else:
+                    logger.warning(f"Invalid custom_id format for retry: {custom_id}")
+                    
+            except Exception as e:
+                logger.error(f"Error parsing custom_id {custom_id} for retry: {e}")
+                continue
+        
+        if not retry_batch_data:
+            logger.warning("No valid retry requests found after parsing custom_ids")
+            return None
+            
+        # Submit retry batch
+        batch_idx = len(self.batch_jobs)  # Use next available batch index
+        job_id = self._submit_single_batch(retry_batch_data, batch_idx, checkpoint_dir)
+        
+        if job_id:
+            # Mark this as a retry batch in job metadata
+            self.batch_jobs[job_id]['is_retry_batch'] = True
+            self.batch_jobs[job_id]['retry_request_count'] = len(retry_batch_data)
+            self.batch_jobs[job_id]['file_metadata']['custom_id_mapping'] = custom_id_mapping
+            
+            logger.info(f"✅ Created retry batch {job_id} with {len(retry_batch_data)} requests")
+            
+            # Update retry attempts for these requests
+            for request_data in retryable_requests:
+                custom_id = request_data['custom_id']
+                if custom_id in self.failed_requests:
+                    self.failed_requests[custom_id]['retry_count'] += 1
+                    self.failed_requests[custom_id]['last_attempt'] = time.time()
+                    
+        return job_id
+    
+    def cleanup_successful_retries(self) -> int:
+        """
+        Remove successfully processed requests from failed_requests tracking.
+        
+        Returns:
+            Number of failed requests cleaned up
+        """
+        cleaned_count = 0
+        
+        # Get list of custom_ids to remove (can't modify dict while iterating)
+        to_remove = []
+        
+        for custom_id, failure_data in self.failed_requests.items():
+            # Parse custom_id to get hash
+            try:
+                parts = custom_id.split('_')
+                if len(parts) >= 2 and parts[0] == 'hash':
+                    hash_value = parts[1]
+                    
+                    # If this hash is now in processed_hashes, the retry succeeded
+                    if hash_value in self.processed_hashes:
+                        to_remove.append(custom_id)
+                        cleaned_count += 1
+                        
+            except Exception as e:
+                logger.debug(f"Error parsing custom_id {custom_id} for cleanup: {e}")
+                continue
+        
+        # Remove successful retries
+        for custom_id in to_remove:
+            del self.failed_requests[custom_id]
+            
+        if cleaned_count > 0:
+            logger.info(f"Cleaned up {cleaned_count} successfully retried requests")
+            
+        return cleaned_count
     
     def _index_embeddings_batch(self, items_to_index: List[Dict[str, Any]]) -> int:
         """
@@ -812,6 +1148,7 @@ class BatchEmbeddingPipeline:
         batch_jobs_path = os.path.join(checkpoint_dir, 'batch_jobs.pkl')
         blacklisted_files_path = os.path.join(checkpoint_dir, 'batch_blacklisted_files.pkl')
         queue_state_path = os.path.join(checkpoint_dir, 'batch_queue_state.pkl')
+        failed_requests_path = os.path.join(checkpoint_dir, 'batch_failed_requests.pkl')
         
         if os.path.exists(processed_hashes_path):
             try:
@@ -831,6 +1168,16 @@ class BatchEmbeddingPipeline:
             except Exception as e:
                 logger.error(f"Error loading blacklisted files: {str(e)}")
                 self.blacklisted_files = set()
+        
+        # Load failed requests for retry tracking
+        if os.path.exists(failed_requests_path):
+            try:
+                with open(failed_requests_path, 'rb') as f:
+                    self.failed_requests = pickle.load(f)
+                logger.info(f"Loaded {len(self.failed_requests)} failed requests for retry tracking")
+            except Exception as e:
+                logger.error(f"Error loading failed requests: {str(e)}")
+                self.failed_requests = {}
         
         if os.path.exists(batch_jobs_path):
             try:
@@ -914,6 +1261,8 @@ class BatchEmbeddingPipeline:
         processed_hashes_path = os.path.join(checkpoint_dir, 'batch_processed_hashes.pkl')
         batch_jobs_path = os.path.join(checkpoint_dir, 'batch_jobs.pkl')
         queue_state_path = os.path.join(checkpoint_dir, 'batch_queue_state.pkl')
+        failed_requests_path = os.path.join(checkpoint_dir, 'batch_failed_requests.pkl')
+        blacklisted_files_path = os.path.join(checkpoint_dir, 'batch_blacklisted_files.pkl')
         
         try:
             with open(processed_hashes_path, 'wb') as f:
@@ -931,9 +1280,18 @@ class BatchEmbeddingPipeline:
             }
             with open(queue_state_path, 'wb') as f:
                 pickle.dump(queue_state, f)
+            
+            # Save failed requests for retry tracking
+            with open(failed_requests_path, 'wb') as f:
+                pickle.dump(self.failed_requests, f)
+            
+            # Save blacklisted files
+            with open(blacklisted_files_path, 'wb') as f:
+                pickle.dump(list(self.blacklisted_files), f)
                 
             logger.info(f"Saved checkpoint: {len(self.processed_hashes)} processed hashes, "
-                       f"{len(self.batch_jobs)} batch jobs, queue state: {len(self.active_batch_queue)} active")
+                       f"{len(self.batch_jobs)} batch jobs, {len(self.failed_requests)} failed requests, "
+                       f"queue state: {len(self.active_batch_queue)} active")
             
         except Exception as e:
             logger.error(f"Error saving checkpoint: {str(e)}")
@@ -1332,6 +1690,39 @@ class BatchEmbeddingPipeline:
                         submitted = self._submit_pending_batches(checkpoint_dir)
                         if submitted > 0:
                             logger.info(f"📤 Submitted {submitted} new batches to queue")
+                    
+                    # Check for retryable failed requests if we have available slots and no pending batches
+                    if (self.enable_automatic_retries and 
+                        self.retry_batch_creation and
+                        len(self.active_batch_queue) < self.max_active_batches and 
+                        not self.pending_batches and 
+                        len(self.failed_requests) > 0):
+                        
+                        retryable_count = len(self.get_retryable_failed_requests())
+                        if retryable_count > 0:
+                            logger.info(f"🔄 Attempting to create retry batch for {retryable_count} failed requests")
+                            
+                            # Need hash_lookup and string_dict for retry batch creation
+                            # These should be loaded from checkpoints
+                            hash_lookup_path = os.path.join(checkpoint_dir, 'hash_lookup.pkl')
+                            string_dict_path = os.path.join(checkpoint_dir, 'string_dict.pkl')
+                            
+                            if os.path.exists(hash_lookup_path) and os.path.exists(string_dict_path):
+                                try:
+                                    with open(hash_lookup_path, 'rb') as f:
+                                        hash_lookup = pickle.load(f)
+                                    with open(string_dict_path, 'rb') as f:
+                                        string_dict = pickle.load(f)
+                                    
+                                    retry_job_id = self.create_retry_batch(hash_lookup, string_dict, checkpoint_dir)
+                                    if retry_job_id:
+                                        logger.info(f"✅ Created retry batch {retry_job_id}")
+                                        self.active_batch_queue.append(retry_job_id)
+                                        
+                                except Exception as e:
+                                    logger.error(f"Error creating retry batch: {e}")
+                            else:
+                                logger.warning("Cannot create retry batch - hash_lookup.pkl or string_dict.pkl not found")
                     
                     # Save checkpoint after any changes
                     self.save_checkpoint(checkpoint_dir)
@@ -2564,6 +2955,24 @@ class BatchEmbeddingPipeline:
                 if count > 0:
                     logger.info(f"   {label}: {count}")
             
+            # Add failed request reporting
+            if len(self.failed_requests) > 0 and self.enable_detailed_error_reporting:
+                logger.info(f"")
+                logger.info(f"🔍 FAILED REQUEST ANALYSIS:")
+                
+                failed_summary = self.get_failed_requests_summary()
+                logger.info(f"   Total failed requests: {failed_summary['total_failed']}")
+                
+                if failed_summary['by_category']:
+                    logger.info(f"   Failures by category:")
+                    for category, count in failed_summary['by_category'].items():
+                        logger.info(f"     • {category}: {count}")
+                
+                if failed_summary['retryable_requests'] > 0:
+                    logger.info(f"   🔄 Retryable requests: {failed_summary['retryable_requests']}")
+                if failed_summary['max_retries_exceeded'] > 0:
+                    logger.info(f"   ❌ Max retries exceeded: {failed_summary['max_retries_exceeded']}")
+            
             if active_count > 0:
                 logger.info(f"")
                 logger.info(f"⏳ Jobs are still processing. Check again later.")
@@ -2664,6 +3073,18 @@ class BatchEmbeddingPipeline:
                 results_file_path = os.path.join(checkpoint_dir, f'batch_results_{job_info["batch_idx"]}.jsonl')
                 self._download_batch_results(batch_status.output_file_id, results_file_path)
                 
+                # Check for and process error file if available
+                if hasattr(batch_status, 'error_file_id') and batch_status.error_file_id:
+                    logger.info(f"Error file found for job {batch_job_id}: {batch_status.error_file_id}")
+                    error_analysis = self._process_error_file(batch_status.error_file_id, batch_job_id)
+                    
+                    # Store error analysis in job info
+                    self.batch_jobs[batch_job_id]['error_analysis'] = error_analysis
+                    logger.warning(f"Job {batch_job_id} had {error_analysis['total_errors']} failed requests. "
+                                 f"Categories: {error_analysis['errors_by_category']}")
+                else:
+                    logger.debug(f"No error file for job {batch_job_id} - all requests succeeded")
+                
                 # Mark results as downloaded
                 self.batch_jobs[batch_job_id]['results_downloaded'] = True                
                 # Process results - handle recovered jobs without file_metadata
@@ -2683,6 +3104,12 @@ class BatchEmbeddingPipeline:
                 # Update processed hashes
                 for item in items_to_index:
                     self.processed_hashes.add(item['hash_value'])
+                
+                # Clean up any failed requests that were successfully retried
+                if self.cleanup_successful_retries_enabled:
+                    cleaned_retries = self.cleanup_successful_retries()
+                    if cleaned_retries > 0:
+                        logger.info(f"Cleaned up {cleaned_retries} successfully retried requests")
                 
                 # Mark job as processed
                 self.batch_jobs[batch_job_id]['results_processed'] = True

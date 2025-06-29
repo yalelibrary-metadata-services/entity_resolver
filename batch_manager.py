@@ -22,6 +22,15 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
 from src.embedding_and_indexing_batch import BatchEmbeddingPipeline
 
+# Import transition modules (with fallback for missing modules)
+try:
+    from src.batch_state_consolidator import consolidate_batch_state
+    from src.transition_controller import TransitionController, transition_batch_to_realtime
+    TRANSITION_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Transition modules not available: {e}")
+    TRANSITION_AVAILABLE = False
+
 class ProcessLock:
     """Simple file-based process lock to prevent multiple instances."""
     
@@ -966,6 +975,371 @@ def _reset_embedding_stage_internal(config: Dict[str, Any], preserve_tracking: b
         print(f"❌ Error resetting embedding stage: {str(e)}")
         sys.exit(1)
 
+def consolidate_batch_state_cli(config: Dict[str, Any]) -> None:
+    """CLI handler for batch state consolidation."""
+    print("🔄 Consolidating batch processing state...")
+    
+    if not TRANSITION_AVAILABLE:
+        print("❌ Transition modules not available. Check imports.")
+        sys.exit(1)
+    
+    try:
+        results = consolidate_batch_state(config)
+        
+        if results['status'] == 'completed':
+            summary = results['summary']
+            print(f"\n✅ Batch state consolidation completed successfully!")
+            print(f"📊 Consolidated {summary['consolidated_state']['total_processed_hashes']:,} processed hashes")
+            print(f"📊 Found {results['failed_request_analysis']['total_failed']:,} failed requests")
+            print(f"📊 {results['failed_request_analysis']['retryable']:,} requests are retryable")
+            
+            if results['transition_ready']['ready']:
+                print("\n🟢 System is ready for batch-to-real-time transition")
+            else:
+                print("\n🔴 System is NOT ready for transition:")
+                for issue in results['transition_ready']['issues']:
+                    print(f"  ❌ {issue}")
+        else:
+            print(f"❌ Consolidation failed: {results.get('error', 'Unknown error')}")
+            
+    except Exception as e:
+        print(f"❌ Error in state consolidation: {str(e)}")
+        sys.exit(1)
+
+def analyze_transition_cli(config: Dict[str, Any]) -> None:
+    """CLI handler for transition analysis."""
+    print("📊 Analyzing readiness for batch-to-real-time transition...")
+    
+    if not TRANSITION_AVAILABLE:
+        print("❌ Transition modules not available. Check imports.")
+        sys.exit(1)
+    
+    try:
+        controller = TransitionController(config)
+        analysis = controller.pre_transition_analysis()
+        
+        print("\n" + "="*60)
+        print("TRANSITION READINESS ANALYSIS")
+        print("="*60)
+        print(f"Transition Feasible: {'🟢 YES' if analysis['transition_feasible'] else '🔴 NO'}")
+        
+        # Show batch state
+        batch_state = analysis['batch_state']
+        print(f"\n📦 BATCH STATE:")
+        print(f"  Processed hashes: {batch_state['batch_processed_hashes']:,}")
+        print(f"  Failed requests: {batch_state['failed_requests']:,}")
+        print(f"  Active jobs: {batch_state.get('queue_active', 0):,}")
+        print(f"  Completed jobs: {batch_state.get('queue_completed', 0):,}")
+        
+        # Show real-time state
+        realtime_state = analysis['realtime_state']
+        print(f"\n⚡ REAL-TIME STATE:")
+        print(f"  Processed hashes: {realtime_state['realtime_processed_hashes']:,}")
+        
+        # Show issues
+        if analysis['errors']:
+            print("\n❌ BLOCKING ISSUES:")
+            for error in analysis['errors']:
+                print(f"  • {error}")
+        
+        # Show warnings
+        if analysis['warnings']:
+            print("\n⚠️  WARNINGS:")
+            for warning in analysis['warnings']:
+                print(f"  • {warning}")
+        
+        # Show recommendations
+        if analysis['recommendations']:
+            print("\n💡 RECOMMENDATIONS:")
+            for rec in analysis['recommendations']:
+                print(f"  • {rec}")
+        
+        if analysis['transition_feasible']:
+            print("\n✅ Ready to proceed with transition!")
+            print("   Use --switch-to-realtime to execute the transition")
+        else:
+            print("\n❌ Transition is not recommended at this time")
+            print("   Resolve the blocking issues or use --force to proceed anyway")
+            
+    except Exception as e:
+        print(f"❌ Error in transition analysis: {str(e)}")
+        sys.exit(1)
+
+def switch_to_realtime_cli(config: Dict[str, Any], force: bool = False) -> None:
+    """CLI handler for switching to real-time processing."""
+    print("🔄 Switching from batch to real-time processing...")
+    
+    if not TRANSITION_AVAILABLE:
+        print("❌ Transition modules not available. Check imports.")
+        sys.exit(1)
+    
+    if not force:
+        print("\n⚠️  This will:")
+        print("   1. Terminate batch processing")
+        print("   2. Consolidate all batch state")
+        print("   3. Switch to real-time processing")
+        print("   4. Preserve all progress and retry failed requests")
+        
+        response = input("\nProceed with transition? (y/N): ")
+        if response.lower() != 'y':
+            print("❌ Transition cancelled by user")
+            return
+    
+    try:
+        import pickle
+        
+        # Load preprocessing data
+        checkpoint_dir = config.get("checkpoint_dir", "data/checkpoints")
+        
+        print("📁 Loading preprocessing data...")
+        with open(os.path.join(checkpoint_dir, "string_dict.pkl"), 'rb') as f:
+            string_dict = pickle.load(f)
+        
+        with open(os.path.join(checkpoint_dir, "field_hash_mapping.pkl"), 'rb') as f:
+            field_hash_mapping = pickle.load(f)
+        
+        with open(os.path.join(checkpoint_dir, "string_counts.pkl"), 'rb') as f:
+            string_counts = pickle.load(f)
+        
+        print(f"✅ Loaded {len(string_dict):,} strings, {len(field_hash_mapping):,} field mappings")
+        
+        # Execute transition
+        print("\n🚀 Executing batch-to-real-time transition...")
+        results = transition_batch_to_realtime(
+            config, string_dict, field_hash_mapping, string_counts, force
+        )
+        
+        print("\n" + "="*60)
+        print("TRANSITION RESULTS")
+        print("="*60)
+        
+        if results['status'] == 'completed':
+            print(f"✅ Transition completed successfully in {results['elapsed_time']:.2f} seconds!")
+            
+            # Show consolidation stats
+            if 'consolidation' in results and 'summary' in results['consolidation']:
+                summary = results['consolidation']['summary']
+                cs = summary.get('consolidated_state', {})
+                print(f"📊 Total processed hashes: {cs.get('total_processed_hashes', 0):,}")
+                print(f"📊 From batch processing: {cs.get('batch_only_hashes', 0):,}")
+                print(f"📊 From real-time processing: {cs.get('realtime_only_hashes', 0):,}")
+            
+            # Show real-time processing results
+            if 'realtime_processing' in results:
+                rt_results = results['realtime_processing']
+                print(f"⚡ Real-time processed: {rt_results.get('strings_processed', 0):,} strings")
+                print(f"⚡ Tokens used: {rt_results.get('tokens_used', 0):,}")
+                
+                if 'failed_requests' in rt_results:
+                    failed = rt_results['failed_requests']
+                    print(f"⚡ Failed requests: {failed.get('total_failed', 0):,} total, {failed.get('retryable', 0):,} retryable")
+            
+            print("\n🎉 System is now running in real-time mode!")
+            print("   All batch progress has been preserved and failed requests will be retried.")
+            
+        elif results['status'] == 'blocked':
+            print("❌ Transition was blocked by pre-analysis issues")
+            print("   Use --force to proceed anyway or resolve the issues first")
+            
+        else:
+            print(f"❌ Transition failed: {results.get('error', 'Unknown error')}")
+            if 'transition_state' in results:
+                ts = results['transition_state']
+                if ts.get('errors'):
+                    print("\nErrors encountered:")
+                    for error in ts['errors']:
+                        print(f"  • {error}")
+            
+    except Exception as e:
+        print(f"❌ Error in transition execution: {str(e)}")
+        sys.exit(1)
+
+def consolidate_batch_state_cli(config: Dict[str, Any]) -> None:
+    """CLI handler for batch state consolidation."""
+    if not TRANSITION_AVAILABLE:
+        print("❌ Transition modules not available")
+        print("💡 Please ensure transition modules are properly installed")
+        sys.exit(1)
+    
+    print("\n🔄 Consolidating batch processing state...")
+    print("="*50)
+    
+    try:
+        from src.batch_state_consolidator import consolidate_batch_state
+        
+        # Run consolidation
+        results = consolidate_batch_state(config)
+        
+        if results['status'] == 'completed':
+            summary = results['summary']
+            print(f"✅ State consolidation completed successfully!")
+            print(f"\n📊 CONSOLIDATION SUMMARY:")
+            print(f"   • Total processed hashes: {summary['consolidated_state']['total_processed_hashes']:,}")
+            print(f"   • From batch only: {summary['consolidated_state']['batch_only_hashes']:,}")
+            print(f"   • From real-time only: {summary['consolidated_state']['realtime_only_hashes']:,}")
+            print(f"   • Hash overlap: {summary['consolidated_state']['overlap_hashes']:,}")
+            
+            failed_analysis = results['failed_request_analysis']
+            print(f"\n📋 FAILED REQUEST ANALYSIS:")
+            print(f"   • Total failed: {failed_analysis['total_failed']:,}")
+            print(f"   • Retryable: {failed_analysis['retryable']:,}")
+            print(f"   • Max retries exceeded: {failed_analysis['max_retries_exceeded']:,}")
+            
+            if results['transition_ready']['ready']:
+                print(f"\n✅ System is ready for batch-to-real-time transition")
+                print(f"💡 Next step: python batch_manager.py --switch-to-realtime")
+            else:
+                print(f"\n❌ System is NOT ready for transition:")
+                for issue in results['transition_ready']['issues']:
+                    print(f"   • {issue}")
+                print(f"💡 Resolve issues or use --force flag")
+                
+        else:
+            print(f"❌ Consolidation failed: {results.get('error', 'Unknown error')}")
+            sys.exit(1)
+            
+    except Exception as e:
+        print(f"❌ Error during consolidation: {str(e)}")
+        sys.exit(1)
+
+def switch_to_realtime_cli(config: Dict[str, Any], force: bool = False) -> None:
+    """CLI handler for switching to real-time processing."""
+    if not TRANSITION_AVAILABLE:
+        print("❌ Transition modules not available")
+        print("💡 Please ensure transition modules are properly installed")
+        sys.exit(1)
+    
+    print("\n🚀 Switching from batch to real-time processing...")
+    print("="*60)
+    
+    try:
+        from src.transition_controller import transition_batch_to_realtime
+        
+        # Load preprocessing data
+        checkpoint_dir = config.get("checkpoint_dir", "data/checkpoints")
+        string_dict, field_hash_mapping, string_counts = load_preprocessing_data(checkpoint_dir)
+        
+        print(f"📊 Loaded preprocessing data:")
+        print(f"   • Strings: {len(string_dict):,}")
+        print(f"   • Field mappings: {len(field_hash_mapping):,}")
+        print(f"   • String counts: {len(string_counts):,}")
+        
+        # Execute transition
+        print(f"\n🔄 Executing transition (force={force})...")
+        results = transition_batch_to_realtime(
+            config, string_dict, field_hash_mapping, string_counts, force
+        )
+        
+        print(f"\n📋 TRANSITION RESULTS")
+        print("="*30)
+        print(f"Status: {results['status']}")
+        
+        if results['status'] == 'completed':
+            print(f"✅ Transition completed successfully!")
+            print(f"⏱️  Elapsed Time: {results['elapsed_time']:.2f} seconds")
+            
+            # Show consolidation stats
+            if 'consolidation' in results:
+                summary = results['consolidation'].get('summary', {})
+                if 'consolidated_state' in summary:
+                    cs = summary['consolidated_state']
+                    print(f"\n📊 FINAL STATE:")
+                    print(f"   • Total processed hashes: {cs['total_processed_hashes']:,}")
+                    print(f"   • From batch only: {cs['batch_only_hashes']:,}")
+                    print(f"   • From real-time only: {cs['realtime_only_hashes']:,}")
+            
+            print(f"\n🚀 Real-time processing is now active!")
+            print(f"💡 You can now run: python main.py --config config.yml")
+            
+        elif results['status'] == 'blocked':
+            print("❌ Transition blocked by pre-analysis issues")
+            print("💡 Use --force to proceed anyway or resolve issues first")
+            
+            if 'pre_analysis' in results:
+                analysis = results['pre_analysis']
+                if analysis.get('errors'):
+                    print("\n🚫 BLOCKING ISSUES:")
+                    for error in analysis['errors']:
+                        print(f"   • {error}")
+            
+            sys.exit(1)
+            
+        else:
+            print(f"❌ Transition failed: {results.get('error', 'Unknown error')}")
+            if 'transition_state' in results:
+                ts = results['transition_state']
+                if ts.get('errors'):
+                    print("\n🔍 ERROR DETAILS:")
+                    for error in ts['errors']:
+                        print(f"   • {error}")
+            sys.exit(1)
+            
+    except Exception as e:
+        print(f"❌ Error during transition: {str(e)}")
+        sys.exit(1)
+
+def analyze_transition_cli(config: Dict[str, Any]) -> None:
+    """CLI handler for analyzing transition readiness."""
+    if not TRANSITION_AVAILABLE:
+        print("❌ Transition modules not available")
+        print("💡 Please ensure transition modules are properly installed")
+        sys.exit(1)
+    
+    print("\n🔍 Analyzing batch-to-real-time transition readiness...")
+    print("="*60)
+    
+    try:
+        from src.transition_controller import TransitionController
+        
+        controller = TransitionController(config)
+        analysis = controller.pre_transition_analysis()
+        
+        print(f"Transition Feasible: {'✅ YES' if analysis['transition_feasible'] else '❌ NO'}")
+        
+        if analysis['errors']:
+            print(f"\n🚫 BLOCKING ISSUES:")
+            for error in analysis['errors']:
+                print(f"   • {error}")
+        
+        if analysis['warnings']:
+            print(f"\n⚠️  WARNINGS:")
+            for warning in analysis['warnings']:
+                print(f"   • {warning}")
+        
+        if analysis['recommendations']:
+            print(f"\n💡 RECOMMENDATIONS:")
+            for rec in analysis['recommendations']:
+                print(f"   • {rec}")
+        
+        # Show detailed state information
+        if 'batch_state' in analysis:
+            batch_state = analysis['batch_state']
+            print(f"\n📊 BATCH PROCESSING STATE:")
+            print(f"   • Processed hashes: {batch_state.get('processed_hashes', 0):,}")
+            print(f"   • Failed requests: {batch_state.get('failed_requests', 0):,}")
+            print(f"   • Batch jobs: {batch_state.get('batch_jobs', 0):,}")
+            print(f"   • Active jobs: {batch_state.get('queue_active', 0):,}")
+            print(f"   • Completed jobs: {batch_state.get('queue_completed', 0):,}")
+        
+        if 'realtime_state' in analysis:
+            realtime_state = analysis['realtime_state']
+            print(f"\n📊 REAL-TIME PROCESSING STATE:")
+            print(f"   • Processed hashes: {realtime_state.get('processed_hashes', 0):,}")
+        
+        # Next steps
+        print(f"\n📋 NEXT STEPS:")
+        if analysis['transition_feasible']:
+            print(f"   1. Consolidate state: python batch_manager.py --consolidate-state")
+            print(f"   2. Execute transition: python batch_manager.py --switch-to-realtime")
+        else:
+            print(f"   1. Resolve blocking issues listed above")
+            print(f"   2. Or use --force flag to proceed anyway")
+            print(f"   3. python batch_manager.py --switch-to-realtime --force")
+            
+    except Exception as e:
+        print(f"❌ Error during analysis: {str(e)}")
+        sys.exit(1)
+
 def main():
     """Main function."""
     parser = argparse.ArgumentParser(
@@ -981,6 +1355,11 @@ Examples:
   
   # Download and process results
   python batch_manager.py --download
+  
+  # Transition to real-time processing
+  python batch_manager.py --analyze-transition    # Analyze readiness
+  python batch_manager.py --consolidate-state     # Consolidate state
+  python batch_manager.py --switch-to-realtime    # Execute transition
   
   # Recover all batch jobs from OpenAI (if checkpoints corrupted)
   python batch_manager.py --recover
@@ -1028,9 +1407,17 @@ Examples:
                              help='Resubmit failed batch jobs (useful for token limit failures)')
     action_group.add_argument('--cancel', action='store_true',
                              help='Cancel all uncompleted batch jobs (frees up token quota)')
+    action_group.add_argument('--consolidate-state', action='store_true',
+                             help='Consolidate batch state for real-time transition')
+    action_group.add_argument('--switch-to-realtime', action='store_true',
+                             help='Switch from batch to real-time processing')
+    action_group.add_argument('--analyze-transition', action='store_true',
+                             help='Analyze readiness for batch-to-real-time transition')
     
     parser.add_argument('--verbose', '-v', action='store_true',
                        help='Enable verbose logging')
+    parser.add_argument('--force', action='store_true',
+                       help='Force transition even with active batch jobs (for transition commands)')
     
     args = parser.parse_args()
     
@@ -1070,6 +1457,12 @@ Examples:
             resubmit_failed_jobs(config)
         elif args.cancel:
             cancel_uncompleted_jobs(config)
+        elif args.consolidate_state:
+            consolidate_batch_state_cli(config)
+        elif args.switch_to_realtime:
+            switch_to_realtime_cli(config, args.force)
+        elif args.analyze_transition:
+            analyze_transition_cli(config)
             
     except KeyboardInterrupt:
         print("\n🛑 Operation cancelled by user")

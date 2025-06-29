@@ -59,6 +59,16 @@ def parse_arguments():
     parser.add_argument('--disable-scaling', action='store_true',
                       help='EXPERIMENTAL: Disable all feature scaling and use raw values directly')
     
+    # Transition commands
+    parser.add_argument('--switch-to-realtime', action='store_true',
+                      help='Switch from batch to real-time embedding processing')
+    
+    parser.add_argument('--force-transition', action='store_true',
+                      help='Force transition even with active batch jobs')
+    
+    parser.add_argument('--analyze-transition', action='store_true',
+                      help='Analyze readiness for batch-to-real-time transition')
+    
     return parser.parse_args()
 
 def load_config(config_path):
@@ -107,6 +117,154 @@ def start_weaviate_docker(config):
         print(f"Error starting Weaviate Docker: {str(e)}")
         sys.exit(1)
 
+def load_preprocessing_data(checkpoint_dir: str) -> tuple:
+    """Load preprocessing data required for transition operations."""
+    try:
+        import pickle
+        
+        # Load string dictionary
+        with open(os.path.join(checkpoint_dir, "string_dict.pkl"), 'rb') as f:
+            string_dict = pickle.load(f)
+        
+        # Load field hash mapping
+        with open(os.path.join(checkpoint_dir, "field_hash_mapping.pkl"), 'rb') as f:
+            field_hash_mapping = pickle.load(f)
+        
+        # Load string counts
+        with open(os.path.join(checkpoint_dir, "string_counts.pkl"), 'rb') as f:
+            string_counts = pickle.load(f)
+        
+        return string_dict, field_hash_mapping, string_counts
+        
+    except FileNotFoundError as e:
+        print(f"❌ Preprocessing data not found: {str(e)}")
+        print("💡 Run preprocessing stage first: python main.py --config config.yml --start preprocessing --end preprocessing")
+        sys.exit(1)
+    except Exception as e:
+        print(f"❌ Error loading preprocessing data: {str(e)}")
+        sys.exit(1)
+
+def handle_transition_commands(args, config: Dict[str, Any], logger):
+    """Handle batch-to-real-time transition commands."""
+    # Import transition modules with fallback
+    try:
+        from src.transition_controller import TransitionController, transition_batch_to_realtime
+        from src.batch_state_consolidator import BatchStateConsolidator
+    except ImportError as e:
+        print(f"❌ Transition modules not available: {e}")
+        print("💡 Please ensure all transition modules are properly installed")
+        sys.exit(1)
+    
+    checkpoint_dir = config.get("checkpoint_dir", "data/checkpoints")
+    
+    # Handle analyze transition command
+    if args.analyze_transition:
+        print("\n" + "="*60)
+        print("BATCH-TO-REAL-TIME TRANSITION ANALYSIS")
+        print("="*60)
+        
+        try:
+            controller = TransitionController(config)
+            analysis = controller.pre_transition_analysis()
+            
+            print(f"Transition Feasible: {'✅ YES' if analysis['transition_feasible'] else '❌ NO'}")
+            
+            if analysis['errors']:
+                print("\n🚫 BLOCKING ISSUES:")
+                for error in analysis['errors']:
+                    print(f"  • {error}")
+            
+            if analysis['warnings']:
+                print("\n⚠️  WARNINGS:")
+                for warning in analysis['warnings']:
+                    print(f"  • {warning}")
+            
+            if analysis['recommendations']:
+                print("\n💡 RECOMMENDATIONS:")
+                for rec in analysis['recommendations']:
+                    print(f"  • {rec}")
+            
+            # Show summary stats
+            if 'batch_state' in analysis:
+                batch_state = analysis['batch_state']
+                print(f"\n📊 BATCH STATE:")
+                print(f"  • Processed hashes: {batch_state.get('processed_hashes', 0):,}")
+                print(f"  • Failed requests: {batch_state.get('failed_requests', 0):,}")
+                print(f"  • Active batch jobs: {batch_state.get('queue_active', 0):,}")
+            
+            if 'realtime_state' in analysis:
+                realtime_state = analysis['realtime_state']
+                print(f"\n📊 REAL-TIME STATE:")
+                print(f"  • Processed hashes: {realtime_state.get('processed_hashes', 0):,}")
+                
+        except Exception as e:
+            logger.error(f"Error in transition analysis: {e}")
+            print(f"❌ Analysis failed: {str(e)}")
+            sys.exit(1)
+    
+    # Handle switch to real-time command
+    elif args.switch_to_realtime:
+        print("\n" + "="*60)
+        print("EXECUTING BATCH-TO-REAL-TIME TRANSITION")
+        print("="*60)
+        
+        try:
+            # Load preprocessing data
+            string_dict, field_hash_mapping, string_counts = load_preprocessing_data(checkpoint_dir)
+            logger.info(f"Loaded preprocessing data: {len(string_dict)} strings, "
+                       f"{len(field_hash_mapping)} field mappings, {len(string_counts)} string counts")
+            
+            # Execute transition
+            results = transition_batch_to_realtime(
+                config, string_dict, field_hash_mapping, string_counts, args.force_transition
+            )
+            
+            print(f"\n📋 TRANSITION RESULTS")
+            print("="*30)
+            print(f"Status: {results['status']}")
+            
+            if results['status'] == 'completed':
+                print(f"✅ Transition completed successfully!")
+                print(f"⏱️  Elapsed Time: {results['elapsed_time']:.2f} seconds")
+                
+                # Show consolidation stats
+                if 'consolidation' in results:
+                    summary = results['consolidation'].get('summary', {})
+                    if 'consolidated_state' in summary:
+                        cs = summary['consolidated_state']
+                        print(f"📊 Total Processed Hashes: {cs['total_processed_hashes']:,}")
+                        print(f"📊 From Batch Only: {cs['batch_only_hashes']:,}")
+                        print(f"📊 From Real-time Only: {cs['realtime_only_hashes']:,}")
+                
+                print("\n🚀 Real-time processing is now active with all batch progress preserved.")
+                print("💡 You can now run: python main.py --config config.yml")
+                
+            elif results['status'] == 'blocked':
+                print("❌ Transition blocked by pre-analysis issues")
+                print("💡 Use --force-transition to proceed anyway or resolve the issues first")
+                
+                if 'pre_analysis' in results:
+                    analysis = results['pre_analysis']
+                    if analysis.get('errors'):
+                        print("\n🚫 BLOCKING ISSUES:")
+                        for error in analysis['errors']:
+                            print(f"  • {error}")
+                
+            else:
+                print(f"❌ Transition failed: {results.get('error', 'Unknown error')}")
+                if 'transition_state' in results:
+                    ts = results['transition_state']
+                    if ts.get('errors'):
+                        print("\n🔍 ERROR DETAILS:")
+                        for error in ts['errors']:
+                            print(f"  • {error}")
+                sys.exit(1)
+                
+        except Exception as e:
+            logger.error(f"Error in transition execution: {e}")
+            print(f"❌ Transition failed: {str(e)}")
+            sys.exit(1)
+
 def main():
     """
     Main function to run the entity resolution pipeline.
@@ -145,6 +303,11 @@ def main():
         next_stage = checkpoint_manager.get_next_stage(orchestrator.stages)
         print(f"Next stage to run: {next_stage or 'All stages completed'}\n")
         
+        return
+    
+    # Handle transition commands
+    if args.analyze_transition or args.switch_to_realtime:
+        handle_transition_commands(args, config, logger)
         return
     
     # Log initial information

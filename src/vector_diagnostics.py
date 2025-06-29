@@ -35,6 +35,7 @@ class VectorDiagnosticTool:
         self.client = client
         self.config = config or {}
         self.embedding_dimensions = self.config.get("embedding_dimensions", 1536)
+        self.verbose = self.config.get("vector_diagnostics_verbose", True)  # Default to verbose for backwards compatibility
         self.results = {}
     
     def debug_vector_transmission(self, item_vector, hash_value, field_type):
@@ -84,20 +85,26 @@ class VectorDiagnosticTool:
             logger.error(f"Failed to JSON serialize vector: {str(e)}")
             formats["json_serialized"] = ""
         
-        # Log detailed diagnostics
-        logger.info(f"VECTOR DEBUG [{hash_value}] ===========================")
-        logger.info(f"  Type: {vector_type}, Shape: {vector_shape}")
-        logger.info(f"  Sample: {vector_sample}")
-        logger.info(f"  Field: {field_type}")
-        
-        for format_name, format_data in formats.items():
-            if isinstance(format_data, (list, tuple)):
-                logger.info(f"  {format_name}: {type(format_data).__name__}, Length: {len(format_data)}")
-                if len(format_data) > 0:
-                    logger.info(f"    First element type: {type(format_data[0]).__name__}")
-                    logger.info(f"    First 5 elements: {format_data[:5]}")
-            else:
-                logger.info(f"  {format_name}: {type(format_data).__name__}, Length: {len(format_data) if hasattr(format_data, '__len__') else 'N/A'}")
+        # Log diagnostics based on verbosity setting
+        if self.verbose:
+            # Detailed diagnostics (original behavior)
+            logger.info(f"VECTOR DEBUG [{hash_value}] ===========================")
+            logger.info(f"  Type: {vector_type}, Shape: {vector_shape}")
+            logger.info(f"  Sample: {vector_sample}")
+            logger.info(f"  Field: {field_type}")
+            
+            for format_name, format_data in formats.items():
+                if isinstance(format_data, (list, tuple)):
+                    logger.info(f"  {format_name}: {type(format_data).__name__}, Length: {len(format_data)}")
+                    if len(format_data) > 0:
+                        logger.info(f"    First element type: {type(format_data[0]).__name__}")
+                        logger.info(f"    First 5 elements: {format_data[:5]}")
+                else:
+                    logger.info(f"  {format_name}: {type(format_data).__name__}, Length: {len(format_data) if hasattr(format_data, '__len__') else 'N/A'}")
+        else:
+            # Essential progress tracking only
+            status = "SUCCESS" if len(formats.get("float_list", [])) > 0 else "FAILED"
+            logger.info(f"Vector processed: {field_type} [{hash_value[:8]}...] - {status}")
         
         return formats["float_list"]
     

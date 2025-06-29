@@ -57,6 +57,16 @@ python batch_manager.py --create  # Starts self-managing automated queue system
 python main.py --batch-status     # Check batch job status
 python main.py --batch-results    # Download and process results
 
+# Batch-to-real-time transition (seamless mode switching)
+python main.py --analyze-transition          # Analyze transition readiness
+python main.py --switch-to-realtime          # Execute transition
+python main.py --switch-to-realtime --force-transition  # Force transition
+
+# Alternative transition commands via batch manager
+python batch_manager.py --analyze-transition    # Analyze readiness
+python batch_manager.py --consolidate-state     # Consolidate state
+python batch_manager.py --switch-to-realtime    # Execute transition
+
 # Resume from last checkpoint
 python main.py --resume
 
@@ -116,6 +126,7 @@ graph LR
 - **Taxonomy Classification**: SetFit (Sentence Transformers + logistic head)
 - **Parallel Processing**: asyncio/aiohttp for API rate limit optimization
 - **Subject Enhancement**: Vector similarity analysis with weighted centroid calculation
+- **Transition System**: Seamless batch-to-real-time switching with state consolidation
 - **Configuration Management**: Environment-adaptive resource allocation (local/production)
 
 ## 📋 Data Flow & Processing
@@ -342,6 +353,16 @@ subject_imputation:
   confidence_threshold: 0.70        # Imputation confidence threshold
   use_caching: true                 # Performance optimization
 
+# Batch-to-Real-time Transition Configuration
+max_tokens_per_day: 500000000       # 500M tokens per day (TPD) limit
+tpd_poll_interval: 1800             # 30 minutes between TPD limit checks
+tpd_resume_threshold: 100000000     # 100M tokens threshold to resume processing
+
+error_handling:
+  max_retry_attempts: 3             # Maximum retry attempts for failed requests
+  exponential_backoff_base: 2       # Base for exponential backoff calculation
+  max_backoff_seconds: 300          # Maximum backoff time (5 minutes)
+
 # Enabled features
 features:
   enabled: ["person_cosine", "person_title_squared", "composite_cosine",
@@ -514,6 +535,13 @@ curl http://localhost:8080/v1/.well-known/ready
 - **Network Issues**: System implements progressive retry with intelligent backoff
 - **Status Monitoring**: Real-time quota and queue state logging every 5 minutes
 
+**Batch-to-Real-time Transition Issues**:
+- **Transition Blocked**: Run `python main.py --analyze-transition` to identify blocking issues
+- **Active Batch Jobs**: Wait for completion or use `--force-transition` flag
+- **State Consolidation Failures**: Check checkpoint file permissions and disk space
+- **TPD Rate Limit**: System automatically polls every 30 minutes until quota recovers
+- **Transition Analysis**: Use `python batch_manager.py --analyze-transition` for detailed diagnostics
+
 ### Performance Optimization Tips
 
 1. **Batch Size Tuning**: Balance API limits vs. throughput
@@ -574,6 +602,12 @@ Key classes and their responsibilities:
 - **Environment Adaptation**: Automatic local vs. production resource allocation
 - **Comprehensive Monitoring**: Real-time telemetry, error handling, and recovery systems
 
+### 🔧 **RECENT FIXES: Batch Processing System Robustness (June 2025)**
+- **Fixed Quota Calculation Logic**: Corrected metadata filtering and quota consumption tracking
+- **Enhanced Error Detection**: Fixed immediate quota exceeded detection and 32-hour polling recovery
+- **Improved Status Reporting**: Complete status breakdown including "cancelling" state
+- **Reset Functionality**: Fixed batch_manager.py --reset to properly clean all checkpoint files
+
 ### 🔧 **IMMEDIATE TODOS**
 1. **Feature Analysis**: Investigate why `taxonomy_dissimilarity` and `birth_death_match` show low variance in current dataset
 2. **Performance Tuning**: Optimize remaining 0.77% ANN search overhead
@@ -589,4 +623,4 @@ Key classes and their responsibilities:
 
 **Current Status**: Production-ready entity resolution system with bulletproof automated batch processing and comprehensive tooling for analysis, debugging, and performance optimization.
 
-**Last Updated**: June 2025 - Automated Queue System Enhanced
+**Last Updated**: June 2025 - Batch Processing System Robustness Enhancements

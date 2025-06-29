@@ -38,8 +38,10 @@ entity_resolver/
 ├── 📁 src/                              # Core pipeline modules
 │   ├── orchestrating.py                # Pipeline orchestration & stage management
 │   ├── preprocessing.py                # Optimized CSV processing & CRC32-based deduplication
-│   ├── embedding_and_indexing.py       # Real-time OpenAI embeddings & Weaviate integration
+│   ├── embedding_and_indexing.py       # Real-time OpenAI embeddings & Weaviate integration with TPD rate limiting
 │   ├── embedding_and_indexing_batch.py # Fully Automated Batch OpenAI API (50% cost savings, self-managing 16-batch queue, intelligent quota management)
+│   ├── batch_state_consolidator.py     # Batch-to-real-time state consolidation and migration system
+│   ├── transition_controller.py        # Intelligent batch-to-real-time transition orchestration
 │   ├── subject_quality.py              # Subject quality audit using vector similarity analysis
 │   ├── subject_imputation.py           # Missing subject imputation via composite field vectors
 │   ├── feature_engineering.py          # Feature calculation & caching system
@@ -294,6 +296,24 @@ python batch_manager.py --cancel       # Cancel uncompleted jobs (frees quota)
 python batch_manager.py --reset        # Reset embedding stage (clear checkpoints)
 ```
 
+### Batch-to-Real-time Transition Commands
+```bash
+# Analyze transition readiness
+python main.py --analyze-transition
+python batch_manager.py --analyze-transition
+
+# Consolidate batch processing state
+python batch_manager.py --consolidate-state
+
+# Execute seamless transition
+python main.py --switch-to-realtime
+python batch_manager.py --switch-to-realtime
+
+# Force transition (even with active batch jobs)
+python main.py --switch-to-realtime --force-transition
+python batch_manager.py --switch-to-realtime --force
+```
+
 ### Individual Record Classification
 ```bash
 # Parallel processing (optimized for API limits)
@@ -344,6 +364,18 @@ PIPELINE_ENV=prod python main.py --start subject_quality --end subject_imputatio
 - **Weaviate Optimization**: Environment-specific HNSW parameters and connection pooling
 - **Feature Group Scaling**: Domain-specific scaling strategies with percentile normalization
 - **Cluster Validation**: Parallel validation with 48 workers for production environments
+
+### Seamless Batch-to-Real-time Transition System (NEW)
+- **Intelligent Transition Controller**: Orchestrates complete transition workflow with pre-analysis validation
+- **State Consolidation System**: Merges batch and real-time processing state without data loss
+- **Failed Request Migration**: Automatically migrates failed batch requests for real-time retry with exponential backoff
+- **Enhanced TPD Rate Limiting**: Daily token usage tracking with API header monitoring and 30-minute polling
+- **Graceful Batch Termination**: Processes completed jobs before termination, handles active job cancellation
+- **Pre-transition Analysis**: Evaluates system readiness with recommendations and warnings
+- **Complete CLI Integration**: Full command-line interface for transition operations
+- **Transition Logging**: Comprehensive transition logs with detailed progress and error tracking
+- **Force Mode Support**: Override safety checks for emergency transitions
+- **Bulletproof State Preservation**: Maintains all processing progress during mode switching
 
 ### Fully Automated Batch Processing System (PRODUCTION-READY)
 - **Self-Managing Queue**: Automatically maintains exactly 16 active batches with zero manual intervention
@@ -496,6 +528,20 @@ prod_weaviate:
 - **Subject Enhancement**: Quality audit and imputation with vector similarity
 - **Environment Adaptation**: Local vs. production resource allocation
 - **Comprehensive Error Handling**: Robust recovery and state persistence
+
+### 🔧 **RECENT FIXES: Batch Processing System Robustness (June 2025)**
+- **Fixed Quota Calculation Logic**: 
+  - Corrected metadata filtering to only count batches from this pipeline
+  - Fixed failed job quota consumption (failed jobs do not consume quota once terminal)
+  - Enhanced status tracking to include all job states including "cancelling"
+- **Improved Error Detection & Recovery**:
+  - Fixed immediate quota exceeded detection after batch submission
+  - Enhanced 32-hour polling system with graceful position preservation
+  - Corrected batch_manager.py --reset to properly clean batch_queue_state.pkl
+- **Enhanced Status Reporting**:
+  - Complete status breakdown now shows all job states (pending, validating, in_progress, finalizing, cancelling, completed, failed, expired, cancelled)
+  - Fixed granular status display to show all non-zero status counts
+  - Added BatchJobStatus.CANCELLING constant for consistency
 
 ### 🔧 **TODO: Feature Analysis & Optimization** 
 - **Feature Performance Analysis**: 

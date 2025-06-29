@@ -1,0 +1,86 @@
+nohup: ignoring input
+2025-06-28 21:42:53,847 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/.well-known/openid-configuration "HTTP/1.1 404 Not Found"
+2025-06-28 21:42:53,920 - httpx - INFO - HTTP Request: GET http://localhost:8080/v1/meta "HTTP/1.1 200 OK"
+2025-06-28 21:42:54,065 - httpx - INFO - HTTP Request: GET https://pypi.org/pypi/weaviate-client/json "HTTP/1.1 200 OK"
+2025-06-28 21:42:54,088 - src.embedding_and_indexing_batch - INFO - Connected to Weaviate at http://localhost:8080 (gRPC port: 50051)
+2025-06-28 21:42:54,089 - src.embedding_and_indexing_batch - INFO - EntityString collection already exists
+2025-06-28 21:42:54,089 - src.embedding_and_indexing_batch - INFO - Initialized BatchEmbeddingPipeline with model text-embedding-3-small
+2025-06-28 21:42:54,089 - src.embedding_and_indexing_batch - INFO - Checking status of batch jobs
+2025-06-28 21:42:54,089 - src.embedding_and_indexing_batch - INFO - Loaded 0 processed hashes from checkpoint
+2025-06-28 21:42:54,090 - src.embedding_and_indexing_batch - INFO - Loaded 768 blacklisted files - these will be skipped
+2025-06-28 21:42:59,553 - src.embedding_and_indexing_batch - INFO - Loaded 16 batch jobs from checkpoint
+2025-06-28 21:42:59,906 - src.embedding_and_indexing_batch - INFO - Extracted 800000 submitted hashes from existing batch jobs
+2025-06-28 21:43:15,327 - src.embedding_and_indexing_batch - ERROR - Error loading queue state: Ran out of input
+2025-06-28 21:43:15,328 - src.embedding_and_indexing_batch - INFO - 🔄 Rebuilding queue state from existing batch jobs...
+2025-06-28 21:43:15,354 - src.embedding_and_indexing_batch - INFO - 🔄 Rebuilt queue: 16 active, 0 completed
+2025-06-28 21:43:31,669 - src.embedding_and_indexing_batch - INFO - Saved checkpoint: 781781 processed hashes, 16 batch jobs, queue state: 16 active
+2025-06-28 21:43:31,669 - src.embedding_and_indexing_batch - INFO - ✅ Saved rebuilt queue state
+2025-06-28 21:43:31,670 - src.embedding_and_indexing_batch - INFO - Checking status of 16 batch jobs...
+2025-06-28 21:43:32,214 - httpx - INFO - HTTP Request: GET https://api.openai.com/v1/batches/batch_68605f5107688190a70b429cfe4b24f6 "HTTP/1.1 200 OK"
+2025-06-28 21:43:32,217 - src.embedding_and_indexing_batch - INFO - Job batch_68... (batch 1): in_progress
+2025-06-28 21:43:32,357 - httpx - INFO - HTTP Request: GET https://api.openai.com/v1/batches/batch_68605f780d8c819085563da168ea0352 "HTTP/1.1 200 OK"
+2025-06-28 21:43:32,360 - src.embedding_and_indexing_batch - WARNING - Job batch_68... (batch 2): failed - Errors: Errors(data=[BatchError(code='request_limit_exceeded', line=None, message='Enqueued request limit reached for text-embedding-3-small in organization org-Oo5nvvgzW278U2pWcKBlzs45. Limit: 1,000,000 enqueued requests. Please try again once some in_progress batches have been completed.', param=None)], object='list')
+2025-06-28 21:43:32,479 - httpx - INFO - HTTP Request: GET https://api.openai.com/v1/batches/batch_68605fa0d1a08190a4da6227ce02a078 "HTTP/1.1 200 OK"
+2025-06-28 21:43:32,480 - src.embedding_and_indexing_batch - WARNING - Job batch_68... (batch 3): failed - Errors: Errors(data=[BatchError(code='request_limit_exceeded', line=None, message='Enqueued request limit reached for text-embedding-3-small in organization org-Oo5nvvgzW278U2pWcKBlzs45. Limit: 1,000,000 enqueued requests. Please try again once some in_progress batches have been completed.', param=None)], object='list')
+2025-06-28 21:43:32,681 - httpx - INFO - HTTP Request: GET https://api.openai.com/v1/batches/batch_68605fcbf4f88190b3aa48585a5b49e1 "HTTP/1.1 200 OK"
+2025-06-28 21:43:32,682 - src.embedding_and_indexing_batch - WARNING - Job batch_68... (batch 4): failed - Errors: Errors(data=[BatchError(code='request_limit_exceeded', line=None, message='Enqueued request limit reached for text-embedding-3-small in organization org-Oo5nvvgzW278U2pWcKBlzs45. Limit: 1,000,000 enqueued requests. Please try again once some in_progress batches have been completed.', param=None)], object='list')
+2025-06-28 21:43:32,798 - httpx - INFO - HTTP Request: GET https://api.openai.com/v1/batches/batch_68605ff51aa481908dacb85dd3bd01b5 "HTTP/1.1 200 OK"
+2025-06-28 21:43:32,798 - src.embedding_and_indexing_batch - WARNING - Job batch_68... (batch 5): failed - Errors: Errors(data=[BatchError(code='request_limit_exceeded', line=None, message='Enqueued request limit reached for text-embedding-3-small in organization org-Oo5nvvgzW278U2pWcKBlzs45. Limit: 1,000,000 enqueued requests. Please try again once some in_progress batches have been completed.', param=None)], object='list')
+2025-06-28 21:43:32,911 - httpx - INFO - HTTP Request: GET https://api.openai.com/v1/batches/batch_68606022bdb4819090cfcf0d13a13ff8 "HTTP/1.1 200 OK"
+2025-06-28 21:43:32,912 - src.embedding_and_indexing_batch - WARNING - Job batch_68... (batch 6): failed - Errors: Errors(data=[BatchError(code='request_limit_exceeded', line=None, message='Enqueued request limit reached for text-embedding-3-small in organization org-Oo5nvvgzW278U2pWcKBlzs45. Limit: 1,000,000 enqueued requests. Please try again once some in_progress batches have been completed.', param=None)], object='list')
+2025-06-28 21:43:33,035 - httpx - INFO - HTTP Request: GET https://api.openai.com/v1/batches/batch_6860604b18208190a7dab87cac76ea9a "HTTP/1.1 200 OK"
+2025-06-28 21:43:33,036 - src.embedding_and_indexing_batch - WARNING - Job batch_68... (batch 7): failed - Errors: Errors(data=[BatchError(code='request_limit_exceeded', line=None, message='Enqueued request limit reached for text-embedding-3-small in organization org-Oo5nvvgzW278U2pWcKBlzs45. Limit: 1,000,000 enqueued requests. Please try again once some in_progress batches have been completed.', param=None)], object='list')
+2025-06-28 21:43:33,150 - httpx - INFO - HTTP Request: GET https://api.openai.com/v1/batches/batch_68606072c82881909b897c9a26852ae1 "HTTP/1.1 200 OK"
+2025-06-28 21:43:33,151 - src.embedding_and_indexing_batch - WARNING - Job batch_68... (batch 8): failed - Errors: Errors(data=[BatchError(code='request_limit_exceeded', line=None, message='Enqueued request limit reached for text-embedding-3-small in organization org-Oo5nvvgzW278U2pWcKBlzs45. Limit: 1,000,000 enqueued requests. Please try again once some in_progress batches have been completed.', param=None)], object='list')
+2025-06-28 21:43:33,270 - httpx - INFO - HTTP Request: GET https://api.openai.com/v1/batches/batch_6860609b28348190891f4c63dea10e9d "HTTP/1.1 200 OK"
+2025-06-28 21:43:33,271 - src.embedding_and_indexing_batch - WARNING - Job batch_68... (batch 9): failed - Errors: Errors(data=[BatchError(code='request_limit_exceeded', line=None, message='Enqueued request limit reached for text-embedding-3-small in organization org-Oo5nvvgzW278U2pWcKBlzs45. Limit: 1,000,000 enqueued requests. Please try again once some in_progress batches have been completed.', param=None)], object='list')
+2025-06-28 21:43:33,373 - httpx - INFO - HTTP Request: GET https://api.openai.com/v1/batches/batch_686060c1f9ec81909347b17d1785ff6b "HTTP/1.1 200 OK"
+2025-06-28 21:43:33,374 - src.embedding_and_indexing_batch - WARNING - Job batch_68... (batch 10): failed - Errors: Errors(data=[BatchError(code='request_limit_exceeded', line=None, message='Enqueued request limit reached for text-embedding-3-small in organization org-Oo5nvvgzW278U2pWcKBlzs45. Limit: 1,000,000 enqueued requests. Please try again once some in_progress batches have been completed.', param=None)], object='list')
+2025-06-28 21:43:33,516 - httpx - INFO - HTTP Request: GET https://api.openai.com/v1/batches/batch_686060e83c0481909b86c1d340b452fc "HTTP/1.1 200 OK"
+2025-06-28 21:43:33,517 - src.embedding_and_indexing_batch - WARNING - Job batch_68... (batch 11): failed - Errors: Errors(data=[BatchError(code='request_limit_exceeded', line=None, message='Enqueued request limit reached for text-embedding-3-small in organization org-Oo5nvvgzW278U2pWcKBlzs45. Limit: 1,000,000 enqueued requests. Please try again once some in_progress batches have been completed.', param=None)], object='list')
+2025-06-28 21:43:33,639 - httpx - INFO - HTTP Request: GET https://api.openai.com/v1/batches/batch_68606110b0088190af110d4444301755 "HTTP/1.1 200 OK"
+2025-06-28 21:43:33,640 - src.embedding_and_indexing_batch - WARNING - Job batch_68... (batch 12): failed - Errors: Errors(data=[BatchError(code='request_limit_exceeded', line=None, message='Enqueued request limit reached for text-embedding-3-small in organization org-Oo5nvvgzW278U2pWcKBlzs45. Limit: 1,000,000 enqueued requests. Please try again once some in_progress batches have been completed.', param=None)], object='list')
+2025-06-28 21:43:33,736 - httpx - INFO - HTTP Request: GET https://api.openai.com/v1/batches/batch_686061383a0c81909ff7164e5e89c989 "HTTP/1.1 200 OK"
+2025-06-28 21:43:33,737 - src.embedding_and_indexing_batch - WARNING - Job batch_68... (batch 13): failed - Errors: Errors(data=[BatchError(code='request_limit_exceeded', line=None, message='Enqueued request limit reached for text-embedding-3-small in organization org-Oo5nvvgzW278U2pWcKBlzs45. Limit: 1,000,000 enqueued requests. Please try again once some in_progress batches have been completed.', param=None)], object='list')
+2025-06-28 21:43:33,846 - httpx - INFO - HTTP Request: GET https://api.openai.com/v1/batches/batch_686061649dc0819084c103bb8ba0ba59 "HTTP/1.1 200 OK"
+2025-06-28 21:43:33,847 - src.embedding_and_indexing_batch - WARNING - Job batch_68... (batch 14): failed - Errors: Errors(data=[BatchError(code='request_limit_exceeded', line=None, message='Enqueued request limit reached for text-embedding-3-small in organization org-Oo5nvvgzW278U2pWcKBlzs45. Limit: 1,000,000 enqueued requests. Please try again once some in_progress batches have been completed.', param=None)], object='list')
+2025-06-28 21:43:33,977 - httpx - INFO - HTTP Request: GET https://api.openai.com/v1/batches/batch_6860618f29888190985390940ec76c50 "HTTP/1.1 200 OK"
+2025-06-28 21:43:33,978 - src.embedding_and_indexing_batch - WARNING - Job batch_68... (batch 15): failed - Errors: Errors(data=[BatchError(code='request_limit_exceeded', line=None, message='Enqueued request limit reached for text-embedding-3-small in organization org-Oo5nvvgzW278U2pWcKBlzs45. Limit: 1,000,000 enqueued requests. Please try again once some in_progress batches have been completed.', param=None)], object='list')
+2025-06-28 21:43:34,082 - httpx - INFO - HTTP Request: GET https://api.openai.com/v1/batches/batch_686061b7e0048190bed9496d0d886fa6 "HTTP/1.1 200 OK"
+2025-06-28 21:43:34,083 - src.embedding_and_indexing_batch - INFO - Job batch_68... (batch 16): in_progress
+2025-06-28 21:43:34,083 - src.embedding_and_indexing_batch - INFO - 
+📊 DETAILED BATCH JOB STATUS:
+2025-06-28 21:43:34,083 - src.embedding_and_indexing_batch - INFO -    Total jobs: 16
+2025-06-28 21:43:34,083 - src.embedding_and_indexing_batch - INFO -    🔄 In Progress: 2
+2025-06-28 21:43:34,083 - src.embedding_and_indexing_batch - INFO -    ❌ Failed: 14
+2025-06-28 21:43:34,083 - src.embedding_and_indexing_batch - INFO - 
+2025-06-28 21:43:34,083 - src.embedding_and_indexing_batch - INFO - 🔍 GRANULAR STATUS BREAKDOWN:
+2025-06-28 21:43:34,083 - src.embedding_and_indexing_batch - INFO -    🔄 In Progress: 2
+2025-06-28 21:43:34,083 - src.embedding_and_indexing_batch - INFO -    ❌ Failed: 14
+2025-06-28 21:43:34,083 - src.embedding_and_indexing_batch - INFO - 
+2025-06-28 21:43:34,083 - src.embedding_and_indexing_batch - INFO - ⏳ Jobs are still processing. Check again later.
+📊 Checking batch job status...
+🔍 Debug: Checking checkpoint directory: data/checkpoints
+   Found 16 JSONL files:
+     - batch_requests_13.jsonl
+     - batch_requests_2.jsonl
+     - batch_requests_8.jsonl
+     - batch_requests_1.jsonl
+     - batch_requests_15.jsonl
+     - batch_requests_12.jsonl
+     - batch_requests_0.jsonl
+     - batch_requests_3.jsonl
+     - batch_requests_9.jsonl
+     - batch_requests_14.jsonl
+     - batch_requests_6.jsonl
+     - batch_requests_5.jsonl
+     - batch_requests_4.jsonl
+     - batch_requests_10.jsonl
+     - batch_requests_11.jsonl
+     - batch_requests_7.jsonl
+
+🔍 GRANULAR STATUS BREAKDOWN:
+   🔄 In Progress: 2
+   ❌ Failed: 14
+
+⏳ Jobs are still processing. Check again later.
