@@ -62,7 +62,25 @@ python batch_manager.py --status
 
 ---
 
-## 🔍 **Step 3: Analyze Transition Readiness**
+## 📥 **Step 3: Download Completed Results**
+
+```bash
+# Download and process any completed batch jobs
+python batch_manager.py --download
+```
+
+**Expected Output:**
+```
+📥 Processing completed batch jobs...
+🎉 Batch processing completed successfully!
+   Weaviate collection now contains 1,234,567 objects
+```
+
+**Note:** This step ensures that all completed batch work is properly downloaded and processed before transitioning. If no jobs are completed yet, you'll see a message indicating no completed jobs are available.
+
+---
+
+## 🔍 **Step 4: Analyze Transition Readiness**
 
 ```bash
 # Analyze if the system is ready for transition
@@ -87,7 +105,7 @@ Transition Feasible: ✅ YES
 
 ---
 
-## 🔄 **Step 4: Execute the Transition**
+## 🔄 **Step 5: Execute the Transition**
 
 You have two options depending on your analysis results:
 
@@ -131,7 +149,7 @@ Status: completed
 
 ---
 
-## ⚡ **Step 5: Run Real-Time Processing in Background**
+## ⚡ **Step 6: Run Real-Time Processing in Background**
 
 ### Option A: Run Only Embedding Stage (Recommended)
 ```bash
@@ -158,7 +176,7 @@ ps aux | grep "main.py"
 
 ---
 
-## 📝 **Step 6: Monitor Real-Time Processing**
+## 📝 **Step 7: Monitor Real-Time Processing**
 
 ### Check Process Status
 ```bash
@@ -316,7 +334,8 @@ nohup python main.py --config config.yml --start embedding_and_indexing --end em
 ```bash
 # Complete transition workflow
 kill [BATCH_PID]                                    # Stop batch process
-python batch_manager.py --status                    # Check status  
+python batch_manager.py --status                    # Check status
+python batch_manager.py --download                  # Download completed results
 python batch_manager.py --analyze-transition        # Analyze readiness
 python batch_manager.py --switch-to-realtime        # Execute transition
 nohup python main.py --config config.yml --start embedding_and_indexing --end embedding_and_indexing > embedding_realtime.log 2>&1 &
