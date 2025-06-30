@@ -592,7 +592,7 @@ class EmbeddingAndIndexingPipeline:
             # Initialize diagnostic tool
             diagnostics = VectorDiagnosticTool(self.weaviate_client, {
                 "embedding_dimensions": self.embedding_dimensions,
-                "vector_diagnostics_verbose": self.config.get("vector_diagnostics_verbose", True)
+                "vector_diagnostics_verbose": self.config.get("vector_diagnostics_verbose", False)
             })
             
             # Select verification samples
@@ -601,9 +601,8 @@ class EmbeddingAndIndexingPipeline:
                 min(3, len(items_to_index))
             ) if items_to_index else []
             
-            # Log batch details
-            logger.info(f"Indexing batch of {len(items_to_index)} items with enhanced diagnostics")
-            logger.info(f"Selected {len(verification_samples)} items for verification")
+            # Minimal batch logging
+            logger.debug(f"Indexing batch of {len(items_to_index)} items")
             
             # Use fixed-size batch configuration for better performance
             with self.collection.batch.fixed_size(batch_size=min(100, len(items_to_index))) as batch_writer:
@@ -643,9 +642,7 @@ class EmbeddingAndIndexingPipeline:
             # Verify vector persistence for sample items
             if verification_samples:
                 verification_success = diagnostics.verify_vector_persistence(verification_samples)
-                if verification_success:
-                    logger.info("Vector persistence verification PASSED")
-                else:
+                if not verification_success:
                     logger.warning("Vector persistence verification FAILED")
             
             logger.info(f"Successfully indexed {indexed_count}/{len(items_to_index)} items")
@@ -876,19 +873,13 @@ class EmbeddingAndIndexingPipeline:
         retry_requests = self._get_retry_requests(string_dict, field_hash_mapping, string_counts)
         strings_to_process.extend(retry_requests)
         
-        # Log selection statistics
+        # Concise selection summary
         selected_count = len(strings_to_process)
         retry_count = len(retry_requests)
         new_count = selected_count - retry_count
         
-        logger.info(f"Selected {selected_count} string-field pairs to process:")
-        logger.info(f"  New strings: {new_count}")
-        logger.info(f"  Retry requests: {retry_count}")
-        logger.info(f"Processing status: {already_processed}/{total_candidates} strings already processed ({cache_coverage:.1%})")
-        
-        # Log field type distribution 
-        for field, count in field_match_counts.items():
-            logger.info(f"  Field '{field}': {count} strings selected")
+        if selected_count > 0:
+            logger.info(f"Processing {selected_count} items ({new_count} new, {retry_count} retry) | Cache: {already_processed}/{total_candidates} ({cache_coverage:.1%})")
         
         return strings_to_process
     
@@ -1181,30 +1172,10 @@ class EmbeddingAndIndexingPipeline:
                 failed_count = len(self.failed_requests)
                 retry_count = len(self.retry_queue)
                 
-                logger.info(f"\n{'='*30} CHECKPOINT SUMMARY {'='*30}")
-                logger.info(f"Processed batch of {len(batch)} strings in {batch_time:.2f}s ({items_per_sec:.2f} items/sec)")
-                logger.info(f"Progress: {total_processed}/{len(strings_to_process)} strings ({progress_pct:.2f}%)")
-                
-                if indexed_count > 0:
-                    logger.info(f"Tokens used this batch: {tokens_used} ({tokens_used/indexed_count:.1f} per item)")
-                else:
-                    logger.info(f"Tokens used this batch: {tokens_used} (N/A per item)")
-                
-                logger.info(f"Daily token usage: {self.tokens_today:,}/{self.max_tokens_per_day:,} ({daily_usage_pct:.1f}%)")
-                
-                if failed_count > 0:
-                    logger.info(f"Failed requests: {failed_count:,} total, {retry_count:,} in retry queue")
-                    
-                    # Show failure breakdown
-                    failed_analysis = self._analyze_failed_requests()
-                    if failed_analysis['by_category']:
-                        category_str = ", ".join([f"{cat}: {count}" for cat, count in failed_analysis['by_category'].items()])
-                        logger.info(f"Failure categories: {category_str}")
-                
-                # Log rate limit status
-                tpm_pct = (self.tokens_this_minute / self.max_tokens_per_minute * 100) if self.max_tokens_per_minute > 0 else 0
-                rpm_pct = (self.requests_this_minute / self.max_requests_per_minute * 100) if self.max_requests_per_minute > 0 else 0
-                logger.info(f"Rate limits: {tpm_pct:.1f}% TPM, {rpm_pct:.1f}% RPM")
+                # Concise checkpoint summary
+                logger.info(f"Progress: {total_processed}/{len(strings_to_process)} ({progress_pct:.1f}%) | "
+                           f"Rate: {items_per_sec:.1f}/s | Tokens: {self.tokens_today:,}/{self.max_tokens_per_day:,} ({daily_usage_pct:.1f}%)" +
+                           (f" | Failed: {failed_count}" if failed_count > 0 else ""))
         
         elapsed_time = time.time() - start_time
         overall_throughput = total_processed / elapsed_time if elapsed_time > 0 else 0
@@ -1213,17 +1184,10 @@ class EmbeddingAndIndexingPipeline:
         daily_usage_pct = (self.tokens_today / self.max_tokens_per_day * 100) if self.max_tokens_per_day > 0 else 0
         failed_count = len(self.failed_requests)
         
-        logger.info(f"\n{'='*30} PROCESS COMPLETE {'='*30}")
-        logger.info(f"Real-time embedding and indexing completed in {elapsed_time:.2f} seconds")
-        logger.info(f"Processed {total_processed} strings using {total_tokens} tokens")
-        logger.info(f"Overall throughput: {overall_throughput:.2f} items/sec")
-        logger.info(f"Daily token usage: {self.tokens_today:,}/{self.max_tokens_per_day:,} ({daily_usage_pct:.1f}%)")
-        
-        if failed_count > 0:
-            failed_analysis = self._analyze_failed_requests()
-            logger.info(f"Failed requests: {failed_count:,} total, {failed_analysis['retryable']:,} retryable")
-        else:
-            logger.info("No failed requests - all processing completed successfully")
+        # Concise completion summary
+        logger.info(f"COMPLETE: {total_processed} items in {elapsed_time:.1f}s ({overall_throughput:.1f}/s) | "
+                   f"Tokens: {self.tokens_today:,}/{self.max_tokens_per_day:,} ({daily_usage_pct:.1f}%)" +
+                   (f" | Failed: {failed_count}" if failed_count > 0 else " | Success: 100%"))
         
         # Get collection stats
         try:

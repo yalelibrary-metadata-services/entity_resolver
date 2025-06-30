@@ -213,7 +213,10 @@ class VectorDiagnosticTool:
             logger.warning("No verification samples provided")
             return False
         
-        logger.info(f"Verifying vector persistence for {len(verification_samples)} samples")
+        if self.verbose:
+            logger.info(f"Verifying vector persistence for {len(verification_samples)} samples")
+        else:
+            logger.debug(f"Verifying vector persistence for {len(verification_samples)} samples")
         
         # Get EntityString collection
         try:
@@ -252,28 +255,34 @@ class VectorDiagnosticTool:
                     vector_type = type(obj.vector).__name__
                     
                     if isinstance(obj.vector, dict):
-                        logger.info(f"Vector stored as dictionary with keys: {list(obj.vector.keys())}")
+                        if self.verbose:
+                            logger.info(f"Vector stored as dictionary with keys: {list(obj.vector.keys())}")
                         if obj.vector:  # Check if dictionary is not empty
                             success_count += 1
                     elif isinstance(obj.vector, list):
                         vector_len = len(obj.vector)
-                        logger.info(f"Vector stored as list with length: {vector_len}")
+                        if self.verbose:
+                            logger.info(f"Vector stored as list with length: {vector_len}")
                         if vector_len > 0:
                             success_count += 1
                     else:
                         vector_len = getattr(obj.vector, "__len__", lambda: "unknown")()
-                        logger.info(f"Vector stored as {vector_type} with length: {vector_len}")
+                        if self.verbose:
+                            logger.info(f"Vector stored as {vector_type} with length: {vector_len}")
                         success_count += 1
                         
-                    logger.info(f"Verification success: Vector stored for {hash_val} (Type: {vector_type})")
+                    if self.verbose:
+                        logger.info(f"Verification success: Vector stored for {hash_val} (Type: {vector_type})")
             except Exception as e:
                 logger.error(f"Error during vector verification for {hash_val}: {str(e)}")
         
         if success_count > 0:
-            logger.info(f"Vector persistence verified for {success_count}/{len(verification_samples)} samples")
+            if self.verbose:
+                logger.info(f"Vector persistence verified for {success_count}/{len(verification_samples)} samples")
             return True
         else:
-            logger.error("Vector persistence verification failed for all samples")
+            if self.verbose:
+                logger.error("Vector persistence verification failed for all samples")
             return False
     
     def validate_weaviate_compatibility(self):
