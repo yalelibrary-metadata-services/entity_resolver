@@ -8,6 +8,10 @@ in Weaviate, avoiding the storage of vectors on disk as per project requirements
 import os
 import sys
 import logging
+
+# Suppress verbose HTTP logging for background processing
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("openai").setLevel(logging.WARNING)
 import pickle
 import time
 import json
@@ -780,27 +784,16 @@ class EmbeddingAndIndexingPipeline:
         # Create a lock for synchronizing counter updates
         lock = threading.Lock()
         
-        # Process batches in parallel
+        # Process batches in parallel - no progress bars for background processing
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all batches for processing
             futures = [executor.submit(self._process_and_index_batch, batch, lock) for batch in batches]
             
-            # Process results as they complete with progress visualization
-            with tqdm(total=len(futures), desc="Processing batch operations", unit="batch", ncols=100,
-                    bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]") as pbar:
-                
-                for i, future in enumerate(as_completed(futures)):
-                    indexed_count, tokens_used = future.result()
-                    total_indexed += indexed_count
-                    total_tokens += tokens_used
-                    
-                    # Update progress display with metrics
-                    pbar.update(1)
-                    pbar.set_postfix({
-                        "indexed": total_indexed, 
-                        "tokens": total_tokens,
-                        "avg_tokens": int(total_tokens/max(1, total_indexed)) if total_indexed > 0 else 0
-                    })
+            # Process results as they complete - minimal logging
+            for i, future in enumerate(as_completed(futures)):
+                indexed_count, tokens_used = future.result()
+                total_indexed += indexed_count
+                total_tokens += tokens_used
         
         return total_indexed, total_tokens
     
@@ -1125,56 +1118,27 @@ class EmbeddingAndIndexingPipeline:
         total_processed = 0
         total_tokens = 0
         
-        # Master progress bar for overall process
-        with tqdm(total=len(strings_to_process), desc="Embedding and indexing", unit="item", ncols=100,
-                bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]") as pbar:
+        # Process in checkpoint batches - no progress bars for background processing
+        for i in range(0, len(strings_to_process), checkpoint_batch):
+            batch = strings_to_process[i:i+checkpoint_batch]
+            batch_start_time = time.time()
             
-            # Process in checkpoint batches
-            for i in range(0, len(strings_to_process), checkpoint_batch):
-                batch = strings_to_process[i:i+checkpoint_batch]
-                batch_start_time = time.time()
-                
-                # Process batch
-                indexed_count, tokens_used = self._process_batches_parallel(batch, max_workers)
-                
-                # Update counters
-                total_processed += indexed_count
-                total_tokens += tokens_used
-                
-                # Update progress bar
-                pbar.update(len(batch))
-                
-                # Calculate and display throughput metrics
-                batch_time = time.time() - batch_start_time
-                items_per_sec = indexed_count / batch_time if batch_time > 0 else 0
-                
-                # Enhanced progress metrics
-                daily_usage_pct = (self.tokens_today / self.max_tokens_per_day * 100) if self.max_tokens_per_day > 0 else 0
-                failed_count = len(self.failed_requests)
-                retry_count = len(self.retry_queue)
-                
-                # Update progress bar with enhanced metrics
-                pbar.set_postfix({
-                    "indexed": total_processed, 
-                    "tokens": total_tokens,
-                    "rate": f"{items_per_sec:.1f}/s",
-                    "daily": f"{daily_usage_pct:.1f}%",
-                    "failed": failed_count,
-                    "retry": retry_count
-                })
-                
-                # Save checkpoint
-                self.save_checkpoint(checkpoint_dir)
-                
-                # Enhanced detailed progress logging 
-                progress_pct = total_processed / len(strings_to_process) * 100
-                daily_usage_pct = (self.tokens_today / self.max_tokens_per_day * 100) if self.max_tokens_per_day > 0 else 0
-                failed_count = len(self.failed_requests)
-                retry_count = len(self.retry_queue)
-                
-                # Ultra-minimal: Only token/quota usage
-                logger.info(f"Tokens: {self.tokens_today:,}/{self.max_tokens_per_day:,} ({daily_usage_pct:.1f}%)" +
-                           (f" | Failed: {failed_count}" if failed_count > 0 else ""))
+            # Process batch
+            indexed_count, tokens_used = self._process_batches_parallel(batch, max_workers)
+            
+            # Update counters
+            total_processed += indexed_count
+            total_tokens += tokens_used
+            
+            # Save checkpoint
+            self.save_checkpoint(checkpoint_dir)
+            
+            # Ultra-minimal: Only token/quota usage
+            daily_usage_pct = (self.tokens_today / self.max_tokens_per_day * 100) if self.max_tokens_per_day > 0 else 0
+            failed_count = len(self.failed_requests)
+            
+            logger.info(f"Tokens: {self.tokens_today:,}/{self.max_tokens_per_day:,} ({daily_usage_pct:.1f}%)" +
+                       (f" | Failed: {failed_count}" if failed_count > 0 else ""))
         
         elapsed_time = time.time() - start_time
         overall_throughput = total_processed / elapsed_time if elapsed_time > 0 else 0
