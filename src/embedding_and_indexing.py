@@ -1172,9 +1172,8 @@ class EmbeddingAndIndexingPipeline:
                 failed_count = len(self.failed_requests)
                 retry_count = len(self.retry_queue)
                 
-                # Concise checkpoint summary
-                logger.info(f"Progress: {total_processed}/{len(strings_to_process)} ({progress_pct:.1f}%) | "
-                           f"Rate: {items_per_sec:.1f}/s | Tokens: {self.tokens_today:,}/{self.max_tokens_per_day:,} ({daily_usage_pct:.1f}%)" +
+                # Ultra-minimal: Only token/quota usage
+                logger.info(f"Tokens: {self.tokens_today:,}/{self.max_tokens_per_day:,} ({daily_usage_pct:.1f}%)" +
                            (f" | Failed: {failed_count}" if failed_count > 0 else ""))
         
         elapsed_time = time.time() - start_time
