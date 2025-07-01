@@ -35,7 +35,7 @@ class VectorDiagnosticTool:
         self.client = client
         self.config = config or {}
         self.embedding_dimensions = self.config.get("embedding_dimensions", 1536)
-        self.verbose = self.config.get("vector_diagnostics_verbose", True)  # Default to verbose for backwards compatibility
+        self.verbose = self.config.get("vector_diagnostics_verbose", False)  # Default to minimal logging for background processing
         self.results = {}
     
     def debug_vector_transmission(self, item_vector, hash_value, field_type):
@@ -102,9 +102,13 @@ class VectorDiagnosticTool:
                 else:
                     logger.info(f"  {format_name}: {type(format_data).__name__}, Length: {len(format_data) if hasattr(format_data, '__len__') else 'N/A'}")
         else:
-            # Essential progress tracking only
+            # Essential progress tracking only - use debug level to avoid flooding logs
             status = "SUCCESS" if len(formats.get("float_list", [])) > 0 else "FAILED"
-            logger.info(f"Vector processed: {field_type} [{hash_value[:8]}...] - {status}")
+            logger.debug(f"Vector processed: {field_type} [{hash_value[:8]}...] - {status}")
+            
+            # Only log failures at info level for troubleshooting
+            if status == "FAILED":
+                logger.warning(f"Vector processing FAILED for {field_type} [{hash_value[:8]}...]")
         
         return formats["float_list"]
     

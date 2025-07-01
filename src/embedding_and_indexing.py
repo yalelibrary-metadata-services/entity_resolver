@@ -645,7 +645,7 @@ class EmbeddingAndIndexingPipeline:
                 if not verification_success:
                     logger.warning("Vector persistence verification FAILED")
             
-            logger.info(f"Successfully indexed {indexed_count}/{len(items_to_index)} items")
+            logger.debug(f"Successfully indexed {indexed_count}/{len(items_to_index)} items")
             
         except Exception as e:
             logger.error(f"Error in batch indexing with enhanced diagnostics: {str(e)}")
