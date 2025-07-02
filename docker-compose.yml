@@ -37,7 +37,12 @@ services:
       QUERY_DEFAULTS_VECTOR_SEARCH_COUNT: 1000
       QUERY_MAXIMUM_VECTOR_SEARCH_COUNT: 10000
       BATCH_WORKERS: 4
-      GOROUTINES_THRESHOLD: 10000      
+      GOROUTINES_THRESHOLD: 10000
+      # MASSIVE SCALE: Server-side timeouts for 45M objects
+      QUERY_SLOW_LOG_ENABLED: true
+      QUERY_TIMEOUT: 1800                # 30 minutes server-side query timeout
+      READ_TIMEOUT: 1800                 # 30 minutes read timeout
+      WRITE_TIMEOUT: 300                 # 5 minutes write timeout      
       # HNSW default settings
       DEFAULT_VECTORIZER_HNSW_EF: 128
       DEFAULT_VECTORIZER_HNSW_MAXCONNECTIONS: 64

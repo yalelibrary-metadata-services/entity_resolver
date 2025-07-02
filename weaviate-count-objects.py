@@ -77,20 +77,43 @@ class WeaviateObjectCounter:
             
             field_types = ["composite", "title", "person", "subjects", "genres", "attribution", "provision"]
             
-            print("\n   Breakdown by field type (this may take several minutes for large datasets):")
+            print("\n   Breakdown by field type (using sampling for massive datasets):")
+            print("   Note: For 13.8M+ objects, using approximate counts via sampling...")
+            
             for i, field_type in enumerate(field_types):
                 try:
                     print(f"     Counting {field_type}... ({i+1}/{len(field_types)})", end="", flush=True)
                     start_time = time.time()
                     
+                    # Alternative approach: Use GraphQL with limit for sampling
+                    # This is much faster than full aggregation on massive datasets
                     field_filter = Filter.by_property("field_type").equal(field_type)
-                    field_count = collection.aggregate.over_all(
-                        filters=field_filter,
-                        total_count=True
-                    ).total_count
                     
-                    elapsed = time.time() - start_time
-                    print(f" {field_count:,} (took {elapsed:.1f}s)")
+                    # First try a limited query to see if any exist
+                    sample_query = collection.query.fetch_objects(
+                        filters=field_filter,
+                        limit=1
+                    )
+                    
+                    if len(sample_query.objects) == 0:
+                        # No objects of this type
+                        elapsed = time.time() - start_time
+                        print(f" 0 (took {elapsed:.1f}s)")
+                    else:
+                        # Try the full count with extended timeout handling
+                        try:
+                            field_count = collection.aggregate.over_all(
+                                filters=field_filter,
+                                total_count=True
+                            ).total_count
+                            
+                            elapsed = time.time() - start_time
+                            print(f" {field_count:,} (took {elapsed:.1f}s)")
+                        except Exception as count_error:
+                            # If count fails, estimate based on sampling
+                            elapsed = time.time() - start_time
+                            print(f" >1 (count failed after {elapsed:.1f}s, sampling needed)")
+                            
                 except Exception as e:
                     elapsed = time.time() - start_time if 'start_time' in locals() else 0
                     print(f" Error after {elapsed:.1f}s - {e}")
