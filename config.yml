@@ -91,11 +91,11 @@ batch_manual_polling: true  # Set to true for manual polling, false for automati
 batch_poll_interval: 300  # Seconds between status polls when auto-polling (5 minutes)
 batch_max_wait_time: 86400  # Maximum wait time for batch completion (24 hours)
 
-# Automated Queue Management Configuration - OPTIMIZED (2025-07-02)
+# Automated Queue Management Configuration - CORRECTED (2025-07-02)
 use_automated_queue: true           # Enable automated 16-batch queue system
 max_active_batches: 16              # Maximum concurrent batches (default: 16)  
 queue_poll_interval: 1800           # 30 minutes between status checks (default: 1800)
-request_quota_limit: 800000         # OPTIMIZED: Target 800K requests with aggressive quota usage
+request_quota_limit: 800000         # CORRECTED: 800K IS the conservative limit - maintain exactly this!
 
 # Error Handling Configuration
 error_handling:
@@ -152,16 +152,16 @@ prod_weaviate:
   weaviate_connection_pool_size: 64       # Match available cores
   weaviate_query_concurrent_limit: 32     # High concurrency for production
 
-# Active Weaviate configuration (default to local)
+# Active Weaviate configuration - OPTIMIZED FOR 45M OBJECTS (MASSIVE SCALE)
 weaviate_url: "http://localhost:8080"
-weaviate_timeout: 300      # Increased timeout (seconds)
-weaviate_batch_size: 100
-weaviate_ef: 128
-weaviate_max_connections: 64
-weaviate_ef_construction: 128
-weaviate_grpc_max_receive_size: 104857600  # 100MB for larger responses
-weaviate_connection_pool_size: 16        # Connection pooling
-weaviate_query_concurrent_limit: 4       # Limit concurrent queries
+weaviate_timeout: 1800                  # MASSIVE SCALE: 30min timeout for complex aggregations on 45M objects
+weaviate_batch_size: 2000               # MASSIVE SCALE: Maximum batch sizes for 45M object throughput
+weaviate_ef: 512                        # MASSIVE SCALE: Higher EF for excellent recall on 45M objects
+weaviate_max_connections: 256           # MASSIVE SCALE: Maximum connections for massive parallelism
+weaviate_ef_construction: 512           # MASSIVE SCALE: High construction parameter for optimal indexing
+weaviate_grpc_max_receive_size: 1073741824  # MASSIVE SCALE: 1GB for very large aggregation responses
+weaviate_connection_pool_size: 64       # MASSIVE SCALE: Large connection pool for 45M objects
+weaviate_query_concurrent_limit: 32     # MASSIVE SCALE: Maximum concurrency for production scale
 
 # Enhanced Vector Search Configuration
 weaviate:

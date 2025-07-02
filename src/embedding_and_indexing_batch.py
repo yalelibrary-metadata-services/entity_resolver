@@ -12,14 +12,15 @@ Features:
 - Manual override options for direct control
 
 PERFORMANCE OPTIMIZATIONS (2025-07-02):
-- INCREASED: Quota usage from 95% → 98% before stopping submissions
-- INCREASED: Post-submission threshold from 90% → 96%
-- REDUCED: Safety margin from 10% → 2% for more aggressive quota usage  
-- REDUCED: Conservative buffer from 50K → 10K requests
-- TARGET: Maintain close to 800K enqueued requests (vs previous ~720K)
+- CORRECTED: 800K IS the conservative limit - don't throttle it further!
+- FIXED: Quota usage now maintains 99% of 800K = ~792K requests  
+- FIXED: Post-submission threshold at 99% of 800K
+- CORRECTED: No additional safety margins beyond 1% 
+- REMOVED: All conservative buffers - 800K is already 80% of 1M limit
+- TARGET: Maintain exactly 800K enqueued requests as intended
 
-The automated queue system eliminates manual batch management while aggressively
-utilizing OpenAI's 1M request quota to maintain maximum throughput.
+The automated queue system eliminates manual batch management while maintaining
+the full 800K conservative request quota without additional throttling.
 """
 
 import os
@@ -96,14 +97,14 @@ class BatchEmbeddingPipeline:
         self.poll_interval = config.get("batch_poll_interval", 300)  # 5 minutes (only used in auto mode)
         self.max_wait_time = config.get("batch_max_wait_time", 86400)  # 24 hours
         
-        # Token quota management - OPTIMIZED FOR 800K REQUEST MAINTENANCE
+        # Token quota management - 800K IS ALREADY CONSERVATIVE  
         self.token_quota_limit = config.get("token_quota_limit", 500_000_000)  # 500M default OpenAI limit
-        self.quota_safety_margin = config.get("quota_safety_margin", 0.02)  # OPTIMIZED: 2% safety margin (was 10%)
+        self.quota_safety_margin = config.get("quota_safety_margin", 0.01)  # CORRECTED: 1% safety margin - 800K is the target!
         self.max_concurrent_jobs = config.get("max_concurrent_jobs", 50)  # Limit concurrent jobs
         
         # Request quota management (1M enqueued requests limit)
-        # OPTIMIZED: Maintain closer to 800K limit with aggressive quota usage
-        self.request_quota_limit = config.get("request_quota_limit", 800_000)  # Target 800K requests
+        # CORRECTED: 800K IS the conservative limit - maintain exactly 800K!
+        self.request_quota_limit = config.get("request_quota_limit", 800_000)  # 800K requests (already conservative)
         self.max_requests_per_job = config.get("max_requests_per_job", 50_000)  # 50K requests per job
         
         # Automated queue management - maintain 16 active batches with auto-submission
@@ -1530,7 +1531,7 @@ class BatchEmbeddingPipeline:
                         # Recheck quota after cleanup
                         updated_usage = self._get_current_usage()
                         updated_quota_pct = updated_usage['total_active_requests'] / self.request_quota_limit
-                        if updated_quota_pct <= 0.90:  # Now have room
+                        if updated_quota_pct <= 0.98:  # Allow up to 98% after cleanup
                             logger.info(f"🎉 Quota recovered to {updated_quota_pct*100:.1f}% after cleanup - continuing")
                         else:
                             logger.warning(f"🚨 Still at {updated_quota_pct*100:.1f}% quota after cleanup - stopping submissions")
