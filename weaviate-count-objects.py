@@ -31,6 +31,7 @@ class WeaviateObjectCounter:
         try:
             # Use custom connection with longer timeouts for large datasets
             from weaviate.connect import ConnectionParams
+            import httpx
             
             # Configure for production with 13.8M objects
             connection_params = ConnectionParams.from_params(
@@ -46,7 +47,14 @@ class WeaviateObjectCounter:
             self.weaviate_client = weaviate.WeaviateClient(
                 connection_params=connection_params,
                 additional_config=weaviate.config.AdditionalConfig(
-                    timeout=weaviate.config.Timeout(query=1800, insert=120)  # 30min for queries, 2min for inserts
+                    timeout=weaviate.config.Timeout(
+                        query=1800,    # 30min for queries
+                        insert=120,    # 2min for inserts
+                        init=60,       # 1min for initialization
+                        close=30       # 30sec for cleanup
+                    ),
+                    # Ensure connection pool settings support long operations
+                    connection_pool_maxsize=20
                 )
             )
             

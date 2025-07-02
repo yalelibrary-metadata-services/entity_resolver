@@ -162,6 +162,13 @@ weaviate_ef_construction: 512           # MASSIVE SCALE: High construction param
 weaviate_grpc_max_receive_size: 1073741824  # MASSIVE SCALE: 1GB for very large aggregation responses
 weaviate_connection_pool_size: 64       # MASSIVE SCALE: Large connection pool for 45M objects
 weaviate_query_concurrent_limit: 32     # MASSIVE SCALE: Maximum concurrency for production scale
+# HTTP client timeout configurations for massive scale operations
+weaviate_http_timeout: 1800             # MASSIVE SCALE: 30min HTTP timeout for long aggregations
+weaviate_connect_timeout: 60            # MASSIVE SCALE: 1min connection timeout
+weaviate_read_timeout: 1800             # MASSIVE SCALE: 30min read timeout
+weaviate_write_timeout: 300             # MASSIVE SCALE: 5min write timeout
+weaviate_pool_timeout: 60               # MASSIVE SCALE: 1min connection pool timeout
+weaviate_keepalive_timeout: 300         # MASSIVE SCALE: 5min keepalive timeout
 
 # Enhanced Vector Search Configuration
 weaviate:

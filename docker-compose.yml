@@ -42,7 +42,17 @@ services:
       QUERY_SLOW_LOG_ENABLED: true
       QUERY_TIMEOUT: 1800                # 30 minutes server-side query timeout
       READ_TIMEOUT: 1800                 # 30 minutes read timeout
-      WRITE_TIMEOUT: 300                 # 5 minutes write timeout      
+      WRITE_TIMEOUT: 300                 # 5 minutes write timeout
+      # HTTP connection and keepalive settings
+      HTTP_TIMEOUT: 1800                  # 30 minutes HTTP timeout
+      HTTP_IDLE_TIMEOUT: 300              # 5 minutes idle timeout
+      HTTP_KEEPALIVE_TIMEOUT: 300         # 5 minutes keepalive timeout
+      HTTP_READ_HEADER_TIMEOUT: 60        # 1 minute header read timeout
+      HTTP_WRITE_TIMEOUT: 1800            # 30 minutes HTTP write timeout
+      HTTP_HANDLER_TIMEOUT: 1800          # 30 minutes handler timeout
+      # Connection pool settings
+      CONNECTION_POOL_SIZE: 100           # Maximum connection pool size
+      CONNECTION_POOL_TIMEOUT: 60         # Connection pool timeout
       # HNSW default settings
       DEFAULT_VECTORIZER_HNSW_EF: 128
       DEFAULT_VECTORIZER_HNSW_MAXCONNECTIONS: 64
