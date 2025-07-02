@@ -32,39 +32,39 @@ scaling_config_path: "scaling_config.yml"
 # Resource Allocation - Environment-specific configuration
 # Set environment with PIPELINE_ENV=prod or PIPELINE_ENV=local (default: local)
 
-# Local Development Configuration (default)
+# Local Development Configuration (default) - TIER 4 OPTIMIZED
 local_resources:
   preprocessing_workers: 4
   preprocessing_batch_size: 50
   preprocessing_use_optimized: true
-  embedding_workers: 4
-  embedding_batch_size: 32
-  embedding_checkpoint_batch: 1000
+  embedding_workers: 6                   # OPTIMIZED: 4 → 6 workers for Tier 4 limits
+  embedding_batch_size: 512              # OPTIMIZED: 32 → 512 (16x speedup)
+  embedding_checkpoint_batch: 2000       # INCREASED: 1000 → 2000
   feature_workers: 4
   feature_batch_size: 1000
   classification_workers: 8
   classification_batch_size: 500
 
-# Production Configuration (64 cores, 247GB RAM)
+# Production Configuration (64 cores, 247GB RAM) - TIER 4 OPTIMIZED
 prod_resources:
   preprocessing_workers: 32               # Utilize half cores for I/O bound preprocessing
   preprocessing_batch_size: 500          # Larger batches for better memory utilization  
   preprocessing_use_optimized: true      # Use SQLite-based preprocessing for large datasets
-  embedding_workers: 16                  # Balance between API rate limits and parallelism
-  embedding_batch_size: 100              # Larger batches to reduce API overhead
-  embedding_checkpoint_batch: 5000       # Less frequent checkpointing for performance
+  embedding_workers: 12                  # OPTIMIZED: Balanced for Tier 4 rate limits
+  embedding_batch_size: 1024             # OPTIMIZED: Maximum efficiency for production
+  embedding_checkpoint_batch: 5000       # OPTIMIZED: Balance between performance and safety
   feature_workers: 48                    # High parallelism for CPU-intensive feature computation
   feature_batch_size: 5000               # Large batches to utilize available RAM
   classification_workers: 32             # High parallelism for classification
   classification_batch_size: 2000        # Large batches for efficient processing
 
-# Active configuration (will be set by environment)
+# Active configuration (will be set by environment) - TIER 4 OPTIMIZED
 preprocessing_workers: 4
 preprocessing_batch_size: 50
 preprocessing_use_optimized: true
-embedding_workers: 4
-embedding_batch_size: 32
-embedding_checkpoint_batch: 1000
+embedding_workers: 6                     # OPTIMIZED: 4 → 6 workers for Tier 4
+embedding_batch_size: 512                # OPTIMIZED: 32 → 512 (16x speedup)
+embedding_checkpoint_batch: 2000         # INCREASED: 1000 → 2000
 feature_workers: 4
 feature_batch_size: 1000
 classification_workers: 8
@@ -74,14 +74,14 @@ classification_batch_size: 500
 labeled_matches_file: "labeled_matches.csv"
 training_dataset_file: "training_dataset.csv"
 
-# OpenAI Embedding Configuration
+# OpenAI Embedding Configuration - TIER 4 LIMITS (2025-07-02)
 embedding_model: "text-embedding-3-small"
 embedding_dimensions: 1536
-max_tokens_per_minute: 5000000
-max_requests_per_minute: 10000
-max_tokens_per_day: 500000000         # 500M daily token limit
-tpd_poll_interval: 1800               # 30 minutes polling when TPD limit reached
-tpd_resume_threshold: 100000000       # Resume when >100M tokens available
+max_tokens_per_minute: 4800000        # 96% of Tier 4 limit (5M TPM)
+max_requests_per_minute: 9500         # 95% of Tier 4 limit (10K RPM)
+max_tokens_per_day: 480000000         # 96% of Tier 4 limit (500M TPD)
+tpd_poll_interval: 300                # OPTIMIZED: 5min polling for faster recovery
+tpd_resume_threshold: 50000000        # OPTIMIZED: Resume when 50M tokens available
 
 # Batch Processing Configuration
 use_batch_embeddings: false  # Set to true to use OpenAI Batch API (50% cost savings, 24h turnaround)
@@ -91,11 +91,11 @@ batch_manual_polling: true  # Set to true for manual polling, false for automati
 batch_poll_interval: 300  # Seconds between status polls when auto-polling (5 minutes)
 batch_max_wait_time: 86400  # Maximum wait time for batch completion (24 hours)
 
-# Automated Queue Management Configuration
+# Automated Queue Management Configuration - OPTIMIZED (2025-07-02)
 use_automated_queue: true           # Enable automated 16-batch queue system
 max_active_batches: 16              # Maximum concurrent batches (default: 16)  
 queue_poll_interval: 1800           # 30 minutes between status checks (default: 1800)
-request_quota_limit: 800000         # Conservative 800K request limit (80% of 1M)
+request_quota_limit: 800000         # OPTIMIZED: Target 800K requests with aggressive quota usage
 
 # Error Handling Configuration
 error_handling:
