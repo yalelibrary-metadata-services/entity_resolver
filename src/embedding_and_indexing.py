@@ -575,7 +575,7 @@ class EmbeddingAndIndexingPipeline:
             raise requests.exceptions.RequestException(f"OpenAI API error: {str(e)}")
 
     
-    def _index_embeddings_batch(self, items_to_index: List[Dict[str, Any]]) -> int:
+    def _index_embeddings_batch(self, items_to_index: List[Dict[str, Any]]) -> Tuple[int, List[str]]:
         """
         Index a batch of embeddings directly in Weaviate with enhanced diagnostics.
         
@@ -584,13 +584,14 @@ class EmbeddingAndIndexingPipeline:
                            field_type, frequency, and vector
         
         Returns:
-            Number of successfully indexed items
+            Tuple of (number of successfully indexed items, list of successfully indexed hash_values)
         """
         # Import here to avoid circular imports
         sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         from src.vector_diagnostics import VectorDiagnosticTool
         
         indexed_count = 0
+        successful_hashes = []
         
         try:
             # Initialize diagnostic tool
@@ -639,6 +640,7 @@ class EmbeddingAndIndexingPipeline:
                         )
                         
                         indexed_count += 1
+                        successful_hashes.append(item['hash_value'])
                         
                     except Exception as e:
                         logger.error(f"Error indexing item {item.get('hash_value', 'unknown')}: {str(e)}")
@@ -655,7 +657,7 @@ class EmbeddingAndIndexingPipeline:
             logger.error(f"Error in batch indexing with enhanced diagnostics: {str(e)}")
             # Don't raise here, allow processing to continue with other batches
         
-        return indexed_count
+        return indexed_count, successful_hashes
     
     def _process_and_index_batch(self, batch_texts: List[Tuple[str, str, str, int]], 
                                lock: threading.Lock) -> Tuple[int, int]:
@@ -726,11 +728,11 @@ class EmbeddingAndIndexingPipeline:
                 })
             
             # Index in Weaviate
-            indexed_count = self._index_embeddings_batch(items_to_index)
+            indexed_count, successful_hashes = self._index_embeddings_batch(items_to_index)
             
-            # Update processed hashes
+            # Update processed hashes - only mark successfully indexed items as processed
             with lock:
-                for hash_val in hashes:
+                for hash_val in successful_hashes:
                     self.processed_hashes.add(hash_val)
             
             return indexed_count, sum(token_counts)
@@ -1130,7 +1132,7 @@ class EmbeddingAndIndexingPipeline:
             total_processed += indexed_count
             total_tokens += tokens_used
             
-            # Save checkpoint
+            # Save checkpoint - now atomic (only successfully indexed items are marked as processed)
             self.save_checkpoint(checkpoint_dir)
             
             # Ultra-minimal: Only token/quota usage
