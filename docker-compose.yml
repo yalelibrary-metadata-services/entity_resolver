@@ -1,6 +1,7 @@
 services:
   weaviate:
     image: semitechnologies/weaviate:latest
+    command: ["--host", "0.0.0.0", "--port", "8080", "--scheme", "http", "--read-timeout=1800s", "--write-timeout=1800s"]
     ports:
       - "8080:8080"
       - "50051:50051"
