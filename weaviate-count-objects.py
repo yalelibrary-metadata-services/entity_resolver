@@ -31,6 +31,7 @@ class WeaviateObjectCounter:
         try:
             # Use the proper weaviate.connect_to_local() method with timeout overrides
             
+            # Use connect_to_local with massive timeout configurations
             self.weaviate_client = weaviate.connect_to_local(
                 host="localhost",
                 port=8080,
@@ -38,35 +39,15 @@ class WeaviateObjectCounter:
                 # Configure timeouts for massive scale operations
                 additional_config=weaviate.config.AdditionalConfig(
                     timeout=weaviate.config.Timeout(
-                        query=1800,    # 30min for queries
-                        insert=120,    # 2min for inserts  
+                        query=1800,    # 30min for queries - THIS IS THE KEY FIX
+                        insert=120,    # 2min for inserts
                         init=60,       # 1min for initialization
                         close=30       # 30sec for cleanup
                     ),
-                    connection_pool_maxsize=20
+                    connection_pool_maxsize=100
                 ),
-                # Override default HTTP timeout
                 skip_init_checks=False
             )
-            
-            # Force override the HTTP client timeout after connection
-            import httpx
-            if hasattr(self.weaviate_client, '_connection') and hasattr(self.weaviate_client._connection, '_client'):
-                # Create new HTTP client with extended timeouts
-                new_client = httpx.Client(
-                    timeout=httpx.Timeout(
-                        connect=60.0,
-                        read=1800.0,    # 30 minutes
-                        write=300.0,
-                        pool=60.0
-                    ),
-                    limits=httpx.Limits(
-                        max_connections=100,
-                        max_keepalive_connections=20
-                    )
-                )
-                # Replace the client's HTTP session
-                self.weaviate_client._connection._client = new_client
             
             collections = self.weaviate_client.collections.list_all()
             print(f"   ✓ Connected to Weaviate with massive scale timeouts (30min query, 2min insert)")
