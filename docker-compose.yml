@@ -53,6 +53,9 @@ services:
       # Connection pool settings
       CONNECTION_POOL_SIZE: 100           # Maximum connection pool size
       CONNECTION_POOL_TIMEOUT: 60         # Connection pool timeout
+      # SERVER-SIDE TIMEOUT SETTINGS - CRITICAL FOR 120s TIMEOUT FIX
+      MODULES_CLIENT_TIMEOUT: 30m         # CRITICAL: Default 50s -> 30min for massive scale operations
+      OFFLOAD_TIMEOUT: 1800               # CRITICAL: Default 120s -> 30min (1800s) for aggregations
       # HNSW default settings
       DEFAULT_VECTORIZER_HNSW_EF: 128
       DEFAULT_VECTORIZER_HNSW_MAXCONNECTIONS: 64
