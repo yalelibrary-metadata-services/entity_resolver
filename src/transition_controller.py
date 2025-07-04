@@ -394,7 +394,8 @@ class TransitionController:
     
     def start_batch_processing(self, string_dict: Dict[str, str], 
                               field_hash_mapping: Dict[str, Dict[str, int]],
-                              string_counts: Dict[str, int]) -> Dict[str, Any]:
+                              string_counts: Dict[str, int],
+                              override: bool = False) -> Dict[str, Any]:
         """
         Start batch processing with consolidated state.
         
@@ -402,15 +403,42 @@ class TransitionController:
             string_dict: String hash to value mapping
             field_hash_mapping: Hash to field type mapping
             string_counts: Hash to frequency mapping
+            override: Skip actual processing startup and just mark as ready
             
         Returns:
             Dictionary with processing results
         """
         logger.info("Starting batch processing with consolidated state...")
         
+        if override:
+            # Override mode: Skip actual processing startup, just mark as ready
+            logger.warning("OVERRIDE MODE: Skipping batch processing startup due to Weaviate issues")
+            logger.info("State has been consolidated - you can start batch processing manually later with:")
+            logger.info("nohup python batch_manager.py --create > batch_processing.log 2>&1 &")
+            
+            self.transition_state['batch_started'] = True
+            return {
+                'status': 'completed',
+                'message': 'State consolidated successfully - batch processing ready to start manually',
+                'override_used': True
+            }
+        
         try:
-            # Initialize batch pipeline
-            self.batch_pipeline = BatchEmbeddingPipeline(self.config)
+            # Initialize batch pipeline with error handling
+            try:
+                self.batch_pipeline = BatchEmbeddingPipeline(self.config)
+            except Exception as e:
+                if "Connection refused" in str(e) or "Weaviate" in str(e):
+                    logger.error(f"Cannot start batch processing due to Weaviate connection: {e}")
+                    logger.info("State has been consolidated. Start Weaviate and run batch processing manually:")
+                    logger.info("nohup python batch_manager.py --create > batch_processing.log 2>&1 &")
+                    return {
+                        'status': 'error',
+                        'error': f"Weaviate connection failed: {e}",
+                        'manual_start_required': True
+                    }
+                else:
+                    raise
             
             # Process data with consolidated state
             processing_results = self.batch_pipeline.process(
@@ -579,14 +607,18 @@ class TransitionController:
             else:
                 logger.info("Step 4: Starting batch processing")
                 transition_results['new_processing'] = self.start_batch_processing(
-                    string_dict, field_hash_mapping, string_counts
+                    string_dict, field_hash_mapping, string_counts, override
                 )
             
             if transition_results['new_processing']['status'] != 'completed':
-                transition_results['status'] = 'failed'
-                target_mode = direction.split('_')[2] if direction == "batch_to_realtime" else "batch"
-                logger.error(f"Transition failed during {target_mode} processing startup")
-                return transition_results
+                if override and transition_results['new_processing'].get('manual_start_required'):
+                    logger.warning("Processing startup failed but state is consolidated - continuing due to override")
+                    logger.info("You can start processing manually after fixing Weaviate connection")
+                else:
+                    transition_results['status'] = 'failed'
+                    target_mode = direction.split('_')[2] if direction == "batch_to_realtime" else "batch"
+                    logger.error(f"Transition failed during {target_mode} processing startup")
+                    return transition_results
             
             # Mark transition as completed
             self.transition_state['completed'] = True
