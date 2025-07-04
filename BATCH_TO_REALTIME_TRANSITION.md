@@ -319,10 +319,32 @@ python src/transition_controller.py --analyze-only --direction realtime_to_batch
 python src/transition_controller.py --direction batch_to_realtime --force
 python src/transition_controller.py --direction realtime_to_batch --force
 
+# Override job state tracking (for stale job issues)
+python src/transition_controller.py --direction batch_to_realtime --override
+python src/transition_controller.py --direction realtime_to_batch --override
+
 # Or check current status
 python batch_manager.py --status                    # For batch processing
 python main.py --status                            # For real-time processing
 ```
+
+### If Job State Tracking is Stale
+```bash
+# When batch jobs show as active but are actually completed
+# This bypasses job validation and forces consolidation
+python src/transition_controller.py --direction realtime_to_batch --override
+
+# Warning: This may skip incomplete job processing
+# Use only when certain that "active" jobs are actually stale
+```
+
+**When to use `--override`:**
+- Batch jobs show as active but have actually completed
+- Job tracking state is inconsistent due to process interruptions
+- Connection issues prevented proper job status updates
+- Need to force transition despite apparent active jobs
+
+**⚠️ Warning:** Override skips job completion processing and may result in loss of incomplete work. Use only when confident that supposedly active jobs are stale.
 
 ### If Real-Time Process Crashes
 ```bash

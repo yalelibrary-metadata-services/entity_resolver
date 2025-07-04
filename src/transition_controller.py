@@ -219,12 +219,13 @@ class TransitionController:
         
         return termination_results
     
-    def terminate_batch_processing(self, force: bool = False) -> Dict[str, Any]:
+    def terminate_batch_processing(self, force: bool = False, override: bool = False) -> Dict[str, Any]:
         """
         Gracefully terminate batch processing.
         
         Args:
             force: Force termination even if jobs are active
+            override: Override job state tracking and force consolidation regardless of supposed active jobs
             
         Returns:
             Dictionary with termination results
@@ -236,44 +237,87 @@ class TransitionController:
             'active_jobs_cancelled': 0,
             'pending_jobs_cancelled': 0,
             'completed_jobs_processed': 0,
+            'jobs_overridden': 0,
             'errors': []
         }
         
         try:
-            # Initialize batch pipeline
-            self.batch_pipeline = BatchEmbeddingPipeline(self.config)
+            # Initialize batch pipeline with error handling for Weaviate
+            try:
+                self.batch_pipeline = BatchEmbeddingPipeline(self.config)
+            except Exception as e:
+                if "Connection refused" in str(e) or "Weaviate" in str(e):
+                    logger.warning(f"Weaviate connection failed during batch pipeline initialization: {e}")
+                    logger.warning("Continuing with limited functionality (some operations may be skipped)")
+                    # Create a minimal pipeline object for checkpoint operations
+                    from src.embedding_and_indexing_batch import BatchEmbeddingPipeline
+                    self.batch_pipeline = object.__new__(BatchEmbeddingPipeline)
+                    self.batch_pipeline.config = self.config
+                    self.batch_pipeline.active_batch_queue = []
+                    self.batch_pipeline.pending_batches = []
+                    self.batch_pipeline.weaviate_client = None
+                else:
+                    raise
             
             # Load current state
-            self.batch_pipeline.load_checkpoint(self.checkpoint_dir)
-            
-            # Process any completed jobs first
             try:
-                completed_results = self.batch_pipeline.process_completed_jobs(self.checkpoint_dir)
-                if completed_results.get('status') == 'completed':
-                    termination_results['completed_jobs_processed'] = completed_results.get('successful_jobs', 0)
-                    logger.info(f"Processed {termination_results['completed_jobs_processed']} completed jobs")
+                self.batch_pipeline.load_checkpoint(self.checkpoint_dir)
             except Exception as e:
-                logger.warning(f"Error processing completed jobs: {e}")
+                logger.warning(f"Error loading checkpoint: {e}")
+                # Initialize empty state if checkpoint loading fails
+                if not hasattr(self.batch_pipeline, 'active_batch_queue'):
+                    self.batch_pipeline.active_batch_queue = []
+                if not hasattr(self.batch_pipeline, 'pending_batches'):
+                    self.batch_pipeline.pending_batches = []
+            
+            # Process any completed jobs first (unless override is enabled)
+            if not override:
+                try:
+                    completed_results = self.batch_pipeline.process_completed_jobs(self.checkpoint_dir)
+                    if completed_results.get('status') == 'completed':
+                        termination_results['completed_jobs_processed'] = completed_results.get('successful_jobs', 0)
+                        logger.info(f"Processed {termination_results['completed_jobs_processed']} completed jobs")
+                except Exception as e:
+                    logger.warning(f"Error processing completed jobs: {e}")
             
             # Check for active jobs
             active_jobs = len(self.batch_pipeline.active_batch_queue)
             pending_jobs = len(self.batch_pipeline.pending_batches)
             
-            if active_jobs > 0:
+            if override:
+                # Override mode: forcibly clear all job queues regardless of state
+                logger.warning(f"OVERRIDE MODE: Forcibly clearing {active_jobs} active jobs and {pending_jobs} pending jobs")
+                logger.warning("This may result in loss of incomplete batch processing progress")
+                
+                # Clear all job queues
+                self.batch_pipeline.active_batch_queue.clear()
+                self.batch_pipeline.pending_batches.clear()
+                
+                # Record what was overridden
+                termination_results['jobs_overridden'] = active_jobs + pending_jobs
+                termination_results['active_jobs_cancelled'] = active_jobs
+                termination_results['pending_jobs_cancelled'] = pending_jobs
+                
+                logger.info(f"Override completed: cleared {termination_results['jobs_overridden']} jobs from tracking")
+                
+            elif active_jobs > 0:
                 if force:
                     logger.warning(f"Force cancelling {active_jobs} active batch jobs")
                     # TODO: Implement job cancellation
                     termination_results['active_jobs_cancelled'] = active_jobs
                 else:
-                    raise ValueError(f"Cannot terminate: {active_jobs} active jobs still running. Use force=True to cancel them.")
+                    raise ValueError(f"Cannot terminate: {active_jobs} active jobs still running. Use force=True to cancel them or --override to ignore job state.")
             
-            if pending_jobs > 0:
+            if pending_jobs > 0 and not override:
                 logger.info(f"Clearing {pending_jobs} pending batch jobs")
                 self.batch_pipeline.pending_batches.clear()
                 termination_results['pending_jobs_cancelled'] = pending_jobs
             
             # Save final state
-            self.batch_pipeline.save_checkpoint(self.checkpoint_dir)
+            try:
+                self.batch_pipeline.save_checkpoint(self.checkpoint_dir)
+            except Exception as e:
+                logger.warning(f"Error saving checkpoint (continuing anyway): {e}")
             
             termination_results['success'] = True
             self.transition_state['batch_terminated'] = True
@@ -288,9 +332,10 @@ class TransitionController:
             # Clean up batch pipeline
             if self.batch_pipeline:
                 try:
-                    self.batch_pipeline.close()
-                except:
-                    pass
+                    if hasattr(self.batch_pipeline, 'close'):
+                        self.batch_pipeline.close()
+                except Exception as e:
+                    logger.debug(f"Error closing batch pipeline: {e}")
                 self.batch_pipeline = None
         
         return termination_results
@@ -429,7 +474,8 @@ class TransitionController:
                           field_hash_mapping: Dict[str, Dict[str, int]],
                           string_counts: Dict[str, int],
                           direction: str = "batch_to_realtime",
-                          force_termination: bool = False) -> Dict[str, Any]:
+                          force_termination: bool = False,
+                          override: bool = False) -> Dict[str, Any]:
         """
         Execute transition between batch and real-time processing.
         
@@ -439,6 +485,7 @@ class TransitionController:
             string_counts: Hash to frequency mapping
             direction: "batch_to_realtime" or "realtime_to_batch"
             force_termination: Force termination of active jobs
+            override: Override job state tracking and force consolidation
             
         Returns:
             Dictionary with complete transition results
@@ -479,7 +526,7 @@ class TransitionController:
             # Step 2: Terminate current processing
             if direction == "batch_to_realtime":
                 logger.info("Step 2: Terminating batch processing")
-                transition_results['termination'] = self.terminate_batch_processing(force_termination)
+                transition_results['termination'] = self.terminate_batch_processing(force_termination, override)
             else:
                 logger.info("Step 2: Terminating real-time processing")
                 transition_results['termination'] = self.terminate_realtime_processing()
@@ -577,7 +624,8 @@ def transition_batch_to_realtime(config: Dict[str, Any],
                                 string_dict: Dict[str, str],
                                 field_hash_mapping: Dict[str, Dict[str, int]],
                                 string_counts: Dict[str, int],
-                                force: bool = False) -> Dict[str, Any]:
+                                force: bool = False,
+                                override: bool = False) -> Dict[str, Any]:
     """
     Main function to execute batch-to-real-time transition.
     
@@ -587,19 +635,21 @@ def transition_batch_to_realtime(config: Dict[str, Any],
         field_hash_mapping: Hash to field type mapping
         string_counts: Hash to frequency mapping
         force: Force transition even if there are active batch jobs
+        override: Override job state tracking and force consolidation
         
     Returns:
         Dictionary with transition results
     """
     return execute_transition(config, string_dict, field_hash_mapping, string_counts, 
-                             "batch_to_realtime", force)
+                             "batch_to_realtime", force, override)
 
 
 def transition_realtime_to_batch(config: Dict[str, Any], 
                                 string_dict: Dict[str, str],
                                 field_hash_mapping: Dict[str, Dict[str, int]],
                                 string_counts: Dict[str, int],
-                                force: bool = False) -> Dict[str, Any]:
+                                force: bool = False,
+                                override: bool = False) -> Dict[str, Any]:
     """
     Main function to execute real-time-to-batch transition.
     
@@ -609,12 +659,13 @@ def transition_realtime_to_batch(config: Dict[str, Any],
         field_hash_mapping: Hash to field type mapping
         string_counts: Hash to frequency mapping
         force: Force transition even if there are active real-time jobs
+        override: Override job state tracking and force consolidation
         
     Returns:
         Dictionary with transition results
     """
     return execute_transition(config, string_dict, field_hash_mapping, string_counts, 
-                             "realtime_to_batch", force)
+                             "realtime_to_batch", force, override)
 
 
 def execute_transition(config: Dict[str, Any], 
@@ -622,7 +673,8 @@ def execute_transition(config: Dict[str, Any],
                       field_hash_mapping: Dict[str, Dict[str, int]],
                       string_counts: Dict[str, int],
                       direction: str = "batch_to_realtime",
-                      force: bool = False) -> Dict[str, Any]:
+                      force: bool = False,
+                      override: bool = False) -> Dict[str, Any]:
     """
     Generic function to execute transitions between processing modes.
     
@@ -633,6 +685,7 @@ def execute_transition(config: Dict[str, Any],
         string_counts: Hash to frequency mapping
         direction: "batch_to_realtime" or "realtime_to_batch"
         force: Force transition even if there are active jobs
+        override: Override job state tracking and force consolidation
         
     Returns:
         Dictionary with transition results
@@ -644,7 +697,7 @@ def execute_transition(config: Dict[str, Any],
     try:
         # Execute the transition
         results = controller.execute_transition(
-            string_dict, field_hash_mapping, string_counts, direction, force
+            string_dict, field_hash_mapping, string_counts, direction, force, override
         )
         
         # Save transition log
@@ -675,6 +728,7 @@ if __name__ == "__main__":
     parser.add_argument('--direction', choices=['batch_to_realtime', 'realtime_to_batch'], 
                        default='batch_to_realtime', help='Direction of transition')
     parser.add_argument('--force', action='store_true', help='Force transition even with active jobs')
+    parser.add_argument('--override', action='store_true', help='Override job state tracking and force consolidation regardless of supposed active jobs')
     parser.add_argument('--analyze-only', action='store_true', help='Only perform pre-transition analysis')
     args = parser.parse_args()
     
@@ -726,7 +780,7 @@ if __name__ == "__main__":
         else:
             # Execute full transition
             results = execute_transition(
-                config, string_dict, field_hash_mapping, string_counts, args.direction, args.force
+                config, string_dict, field_hash_mapping, string_counts, args.direction, args.force, args.override
             )
             
             print("\n" + "="*60)
