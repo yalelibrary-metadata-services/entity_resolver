@@ -1537,6 +1537,132 @@ class BatchEmbeddingPipeline:
             
         return slots_freed
     
+    def _verify_actual_completion(self) -> Dict[str, Any]:
+        """
+        Verify actual completion by checking ALL embedding jobs on OpenAI API.
+        This prevents false completion when local tracking becomes inconsistent.
+        
+        Returns:
+            Dictionary with completion verification results
+        """
+        logger.info("🔍 Verifying actual completion status with OpenAI API...")
+        
+        try:
+            # Query OpenAI API for ALL embedding batch jobs
+            active_embedding_jobs = []
+            other_status_jobs = {'completed': 0, 'failed': 0, 'cancelled': 0, 'expired': 0}
+            total_embedding_jobs = 0
+            
+            after = None
+            while True:
+                if after:
+                    batches = self.openai_client.batches.list(limit=100, after=after)
+                else:
+                    batches = self.openai_client.batches.list(limit=100)
+                
+                for batch in batches.data:
+                    # Filter for embedding jobs created by our pipeline
+                    endpoint = getattr(batch, 'endpoint', '')
+                    metadata = getattr(batch, 'metadata', {})
+                    
+                    if (('/embeddings' in endpoint or endpoint == '/v1/embeddings') and
+                        metadata and metadata.get('created_by') == 'embedding_and_indexing_batch'):
+                        
+                        total_embedding_jobs += 1
+                        
+                        # Check status and categorize
+                        if batch.status in ['pending', 'validating', 'in_progress', 'finalizing', 'cancelling']:
+                            active_embedding_jobs.append({
+                                'id': batch.id,
+                                'status': batch.status,
+                                'created_at': batch.created_at,
+                                'endpoint': endpoint
+                            })
+                        elif batch.status in ['completed', 'failed', 'cancelled', 'expired']:
+                            other_status_jobs[batch.status] = other_status_jobs.get(batch.status, 0) + 1
+                
+                if not batches.has_more:
+                    break
+                    
+                if batches.data:
+                    after = batches.data[-1].id
+                else:
+                    break
+            
+            # Determine if truly complete
+            active_jobs_found = len(active_embedding_jobs)
+            truly_complete = (active_jobs_found == 0 and total_embedding_jobs > 0)
+            
+            # Create status summary
+            status_summary = {
+                'active': active_jobs_found,
+                'completed': other_status_jobs['completed'],
+                'failed': other_status_jobs['failed'],
+                'cancelled': other_status_jobs['cancelled'],
+                'expired': other_status_jobs['expired']
+            }
+            
+            logger.info(f"📊 OpenAI API verification found {total_embedding_jobs} total embedding jobs")
+            logger.info(f"   Active jobs: {active_jobs_found}")
+            logger.info(f"   Completed: {other_status_jobs['completed']}, Failed: {other_status_jobs['failed']}")
+            logger.info(f"   Cancelled: {other_status_jobs['cancelled']}, Expired: {other_status_jobs['expired']}")
+            
+            return {
+                'truly_complete': truly_complete,
+                'active_jobs_found': active_jobs_found,
+                'total_jobs': total_embedding_jobs,
+                'status_summary': status_summary,
+                'api_jobs': active_embedding_jobs
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error verifying completion with OpenAI API: {e}")
+            # Conservative fallback: assume NOT complete if we can't verify
+            return {
+                'truly_complete': False,
+                'active_jobs_found': -1,  # Unknown
+                'total_jobs': -1,  # Unknown
+                'status_summary': {'error': str(e)},
+                'api_jobs': []
+            }
+    
+    def _rebuild_tracking_from_api(self, api_jobs: List[Dict[str, Any]]) -> None:
+        """
+        Rebuild local tracking state from actual OpenAI API job status.
+        
+        Args:
+            api_jobs: List of active jobs from OpenAI API
+        """
+        logger.info(f"🔧 Rebuilding local tracking from {len(api_jobs)} active API jobs...")
+        
+        # Clear current tracking
+        original_active = len(self.active_batch_queue)
+        original_completed = len(self.completed_batches)
+        
+        self.active_batch_queue.clear()
+        
+        # Rebuild from API state
+        for job in api_jobs:
+            job_id = job['id']
+            
+            # Add to active queue
+            self.active_batch_queue.append(job_id)
+            
+            # Update or create job tracking
+            if job_id not in self.batch_jobs:
+                self.batch_jobs[job_id] = {
+                    'status': job['status'],
+                    'created_at': job.get('created_at'),
+                    'recovered': True,
+                    'rebuild_recovery': True
+                }
+            else:
+                self.batch_jobs[job_id]['status'] = job['status']
+        
+        logger.info(f"✅ Rebuilt tracking: {len(self.active_batch_queue)} active jobs recovered")
+        logger.info(f"   Previous tracking: {original_active} active, {original_completed} completed")
+        logger.info(f"   Corrected tracking: {len(self.active_batch_queue)} active, {len(self.completed_batches)} completed")
+    
     def _submit_pending_batches(self, checkpoint_dir: str) -> int:
         """
         Submit pending batches ONE AT A TIME with real-time quota verification between each.
@@ -1868,10 +1994,28 @@ class BatchEmbeddingPipeline:
                     
                     last_status_time = current_time
                 
-                # Exit condition: all batches completed
+                # Exit condition: comprehensive completion verification
                 if not self.active_batch_queue and not self.pending_batches:
-                    logger.info(f"🎉 All batches completed!")
-                    break
+                    # CRITICAL: Don't exit just because local queues are empty!
+                    # Verify actual completion with OpenAI API to prevent false completion
+                    logger.info(f"🔍 Local queues empty - verifying actual job completion with OpenAI API...")
+                    
+                    actual_completion = self._verify_actual_completion()
+                    
+                    if actual_completion['truly_complete']:
+                        logger.info(f"✅ Verified completion: All {actual_completion['total_jobs']} jobs are actually finished")
+                        logger.info(f"📊 Final status breakdown: {actual_completion['status_summary']}")
+                        break
+                    else:
+                        logger.warning(f"⚠️  FALSE COMPLETION DETECTED!")
+                        logger.warning(f"   Local tracking showed completion but {actual_completion['active_jobs_found']} jobs are still active")
+                        logger.warning(f"   Status breakdown: {actual_completion['status_summary']}")
+                        logger.warning(f"   Continuing monitoring to prevent data loss...")
+                        
+                        # Rebuild local tracking from API state
+                        self._rebuild_tracking_from_api(actual_completion['api_jobs'])
+                        
+                        # Continue processing - don't exit!
                 
                 # Intelligent wait strategy based on queue state and quota status
                 if self.active_batch_queue and not cycle_had_errors:  # Normal operation
