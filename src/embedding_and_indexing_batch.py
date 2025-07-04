@@ -2733,9 +2733,9 @@ class BatchEmbeddingPipeline:
         # CORRECTED: Use exactly 800K as the target, no buffers or reductions
         safe_request_limit = self.request_quota_target  # Exactly 800K requests
         
-        # Check if we're within all limits - use strict comparison (< instead of <=)
-        within_token_quota = total_estimated_tokens < safe_token_limit
-        within_request_quota = total_estimated_requests < safe_request_limit
+        # Check if we're within all limits - allow exactly at the target (<=)
+        within_token_quota = total_estimated_tokens <= safe_token_limit
+        within_request_quota = total_estimated_requests <= safe_request_limit
         within_job_limit = usage['active_jobs'] < self.max_concurrent_jobs
         
         # Ensure individual request batch doesn't exceed per-job limit
