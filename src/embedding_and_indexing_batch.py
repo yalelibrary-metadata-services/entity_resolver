@@ -121,11 +121,19 @@ class BatchEmbeddingPipeline:
         self.embed_fields = config.get("embed_fields", ["composite", "person", "title"])
         self.skip_fields = config.get("skip_fields", ["provision", "subjects", "personId"])
         
-        # Initialize Weaviate client
-        self.weaviate_client = self._init_weaviate_client()
+        # Initialize Weaviate client (optional - only needed for download/indexing)
+        self.weaviate_client = None
+        self.collection = None
+        self._weaviate_init_attempted = False
         
-        # Prepare the collection
-        self.collection = self._ensure_schema_exists()
+        # Try to initialize Weaviate, but don't fail if it's not available
+        try:
+            self.weaviate_client = self._init_weaviate_client()
+            self.collection = self._ensure_schema_exists()
+            logger.info("Weaviate connection established - ready for both batch creation and download")
+        except Exception as e:
+            logger.warning(f"Weaviate not available during initialization: {e}")
+            logger.info("Batch job creation will work without Weaviate (download will require Weaviate later)")
         
         # Initialize batch job tracking
         self.batch_jobs = {}  # job_id -> job_info
@@ -164,6 +172,24 @@ class BatchEmbeddingPipeline:
         self.permanent_categories = set(permanent_types)
         
         logger.info(f"Initialized BatchEmbeddingPipeline with model {self.embedding_model}")
+    
+    def _ensure_weaviate_connection(self):
+        """
+        Ensure Weaviate connection is established when needed for download/indexing operations.
+        """
+        if self.weaviate_client is None and not self._weaviate_init_attempted:
+            self._weaviate_init_attempted = True
+            try:
+                logger.info("Initializing Weaviate connection for download/indexing operations...")
+                self.weaviate_client = self._init_weaviate_client()
+                self.collection = self._ensure_schema_exists()
+                logger.info("Weaviate connection established successfully")
+            except Exception as e:
+                error_msg = f"Failed to connect to Weaviate for download/indexing: {e}"
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
+        elif self.weaviate_client is None:
+            raise RuntimeError("Weaviate connection required but failed during previous attempt")
     
     def __enter__(self):
         """Context manager entry."""
@@ -1028,6 +1054,9 @@ class BatchEmbeddingPipeline:
             Number of successfully indexed items
         """
         logger.info(f"Indexing batch of {len(items_to_index)} items in Weaviate")
+        
+        # Ensure Weaviate connection for indexing operations
+        self._ensure_weaviate_connection()
         
         indexed_count = 0
         
@@ -3018,6 +3047,9 @@ class BatchEmbeddingPipeline:
         """
         logger.info("Processing completed batch jobs")
         start_time = time.time()
+        
+        # Ensure Weaviate connection for downloading and indexing
+        self._ensure_weaviate_connection()
         
         # Load checkpoint
         self.load_checkpoint(checkpoint_dir)
