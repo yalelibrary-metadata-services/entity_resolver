@@ -24,13 +24,13 @@ logger = logging.getLogger(__name__)
 
 class TransitionController:
     """
-    Orchestrates seamless transition from batch to real-time embedding processing.
+    Orchestrates seamless transitions between batch and real-time embedding processing.
     
     Handles:
-    - Batch process termination
+    - Batch ↔ Real-time process transitions
     - State consolidation and migration
     - Failed request transfer
-    - Real-time processing initiation
+    - Processing initiation for both modes
     - Progress monitoring and reporting
     """
     
@@ -48,12 +48,15 @@ class TransitionController:
         self.transition_state = {
             'started': False,
             'batch_terminated': False,
+            'realtime_terminated': False,
             'state_consolidated': False,
             'realtime_started': False,
+            'batch_started': False,
             'completed': False,
             'start_time': None,
             'end_time': None,
-            'errors': []
+            'errors': [],
+            'direction': None  # 'batch_to_realtime' or 'realtime_to_batch'
         }
         
         # Components
@@ -160,6 +163,61 @@ class TransitionController:
             )
         
         analysis['recommendations'] = recommendations
+    
+    def terminate_realtime_processing(self) -> Dict[str, Any]:
+        """
+        Gracefully terminate real-time processing.
+        
+        Returns:
+            Dictionary with termination results
+        """
+        logger.info("Terminating real-time processing...")
+        
+        termination_results = {
+            'success': False,
+            'active_workers_stopped': 0,
+            'pending_requests_cleared': 0,
+            'errors': []
+        }
+        
+        try:
+            # Initialize real-time pipeline if needed
+            if not self.realtime_pipeline:
+                self.realtime_pipeline = EmbeddingAndIndexingPipeline(self.config)
+            
+            # Load current state
+            self.realtime_pipeline.load_checkpoint(self.checkpoint_dir)
+            
+            # Save current state before termination
+            self.realtime_pipeline.save_checkpoint(self.checkpoint_dir)
+            
+            # Clear any pending retry queues
+            if hasattr(self.realtime_pipeline, 'retry_queue'):
+                pending_count = len(self.realtime_pipeline.retry_queue)
+                self.realtime_pipeline.retry_queue.clear()
+                termination_results['pending_requests_cleared'] = pending_count
+                logger.info(f"Cleared {pending_count} pending retry requests")
+            
+            termination_results['success'] = True
+            self.transition_state['realtime_terminated'] = True
+            
+            logger.info("Real-time processing terminated successfully")
+            
+        except Exception as e:
+            error_msg = f"Error terminating real-time processing: {e}"
+            logger.error(error_msg)
+            termination_results['errors'].append(error_msg)
+        finally:
+            # Clean up real-time pipeline
+            if self.realtime_pipeline:
+                try:
+                    if hasattr(self.realtime_pipeline, 'weaviate_client'):
+                        self.realtime_pipeline.weaviate_client.close()
+                except:
+                    pass
+                self.realtime_pipeline = None
+        
+        return termination_results
     
     def terminate_batch_processing(self, force: bool = False) -> Dict[str, Any]:
         """
@@ -268,6 +326,55 @@ class TransitionController:
                 'error': error_msg
             }
     
+    def start_batch_processing(self, string_dict: Dict[str, str], 
+                              field_hash_mapping: Dict[str, Dict[str, int]],
+                              string_counts: Dict[str, int]) -> Dict[str, Any]:
+        """
+        Start batch processing with consolidated state.
+        
+        Args:
+            string_dict: String hash to value mapping
+            field_hash_mapping: Hash to field type mapping
+            string_counts: Hash to frequency mapping
+            
+        Returns:
+            Dictionary with processing results
+        """
+        logger.info("Starting batch processing with consolidated state...")
+        
+        try:
+            # Initialize batch pipeline
+            self.batch_pipeline = BatchEmbeddingPipeline(self.config)
+            
+            # Process data with consolidated state
+            processing_results = self.batch_pipeline.process(
+                string_dict, field_hash_mapping, string_counts, self.checkpoint_dir
+            )
+            
+            if processing_results['status'] == 'completed':
+                self.transition_state['batch_started'] = True
+                logger.info("Batch processing started successfully")
+            else:
+                logger.error(f"Batch processing failed: {processing_results.get('error')}")
+            
+            return processing_results
+            
+        except Exception as e:
+            error_msg = f"Error starting batch processing: {e}"
+            logger.error(error_msg)
+            return {
+                'status': 'error',
+                'error': error_msg
+            }
+        finally:
+            # Clean up batch pipeline
+            if self.batch_pipeline:
+                try:
+                    self.batch_pipeline.close()
+                except:
+                    pass
+                self.batch_pipeline = None
+    
     def start_realtime_processing(self, string_dict: Dict[str, str], 
                                  field_hash_mapping: Dict[str, Dict[str, int]],
                                  string_counts: Dict[str, int]) -> Dict[str, Any]:
@@ -321,30 +428,37 @@ class TransitionController:
     def execute_transition(self, string_dict: Dict[str, str], 
                           field_hash_mapping: Dict[str, Dict[str, int]],
                           string_counts: Dict[str, int],
-                          force_batch_termination: bool = False) -> Dict[str, Any]:
+                          direction: str = "batch_to_realtime",
+                          force_termination: bool = False) -> Dict[str, Any]:
         """
-        Execute complete batch-to-real-time transition.
+        Execute transition between batch and real-time processing.
         
         Args:
             string_dict: String hash to value mapping
             field_hash_mapping: Hash to field type mapping
             string_counts: Hash to frequency mapping
-            force_batch_termination: Force termination of active batch jobs
+            direction: "batch_to_realtime" or "realtime_to_batch"
+            force_termination: Force termination of active jobs
             
         Returns:
             Dictionary with complete transition results
         """
-        logger.info("Executing complete batch-to-real-time transition...")
+        if direction not in ["batch_to_realtime", "realtime_to_batch"]:
+            raise ValueError(f"Invalid direction: {direction}. Must be 'batch_to_realtime' or 'realtime_to_batch'")
+        
+        logger.info(f"Executing {direction.replace('_', '-')} transition...")
         
         self.transition_state['started'] = True
         self.transition_state['start_time'] = time.time()
+        self.transition_state['direction'] = direction
         
         transition_results = {
             'status': 'in_progress',
+            'direction': direction,
             'pre_analysis': {},
             'termination': {},
             'consolidation': {},
-            'realtime_processing': {},
+            'new_processing': {},
             'transition_state': self.transition_state.copy(),
             'elapsed_time': 0
         }
@@ -355,20 +469,24 @@ class TransitionController:
             transition_results['pre_analysis'] = self.pre_transition_analysis()
             
             if not transition_results['pre_analysis']['transition_feasible']:
-                if not force_batch_termination:
+                if not force_termination:
                     transition_results['status'] = 'blocked'
                     logger.error("Transition blocked by pre-analysis issues")
                     return transition_results
                 else:
                     logger.warning("Proceeding with forced transition despite issues")
             
-            # Step 2: Terminate batch processing
-            logger.info("Step 2: Terminating batch processing")
-            transition_results['termination'] = self.terminate_batch_processing(force_batch_termination)
+            # Step 2: Terminate current processing
+            if direction == "batch_to_realtime":
+                logger.info("Step 2: Terminating batch processing")
+                transition_results['termination'] = self.terminate_batch_processing(force_termination)
+            else:
+                logger.info("Step 2: Terminating real-time processing")
+                transition_results['termination'] = self.terminate_realtime_processing()
             
             if not transition_results['termination']['success']:
                 transition_results['status'] = 'failed'
-                logger.error("Transition failed during batch termination")
+                logger.error(f"Transition failed during {direction.split('_')[0]} termination")
                 return transition_results
             
             # Step 3: Consolidate state
@@ -380,15 +498,22 @@ class TransitionController:
                 logger.error("Transition failed during state consolidation")
                 return transition_results
             
-            # Step 4: Start real-time processing
-            logger.info("Step 4: Starting real-time processing")
-            transition_results['realtime_processing'] = self.start_realtime_processing(
-                string_dict, field_hash_mapping, string_counts
-            )
+            # Step 4: Start new processing mode
+            if direction == "batch_to_realtime":
+                logger.info("Step 4: Starting real-time processing")
+                transition_results['new_processing'] = self.start_realtime_processing(
+                    string_dict, field_hash_mapping, string_counts
+                )
+            else:
+                logger.info("Step 4: Starting batch processing")
+                transition_results['new_processing'] = self.start_batch_processing(
+                    string_dict, field_hash_mapping, string_counts
+                )
             
-            if transition_results['realtime_processing']['status'] != 'completed':
+            if transition_results['new_processing']['status'] != 'completed':
                 transition_results['status'] = 'failed'
-                logger.error("Transition failed during real-time processing startup")
+                target_mode = direction.split('_')[2] if direction == "batch_to_realtime" else "batch"
+                logger.error(f"Transition failed during {target_mode} processing startup")
                 return transition_results
             
             # Mark transition as completed
@@ -400,7 +525,7 @@ class TransitionController:
             transition_results['elapsed_time'] = elapsed_time
             transition_results['transition_state'] = self.transition_state.copy()
             
-            logger.info(f"Batch-to-real-time transition completed successfully in {elapsed_time:.2f} seconds")
+            logger.info(f"{direction.replace('_', '-')} transition completed successfully in {elapsed_time:.2f} seconds")
             
         except Exception as e:
             error_msg = f"Error during transition execution: {e}"
@@ -436,7 +561,8 @@ class TransitionController:
             os.makedirs(log_dir, exist_ok=True)
             
             timestamp = int(time.time())
-            log_file = os.path.join(log_dir, f"batch_to_realtime_transition_{timestamp}.json")
+            direction_str = results.get('direction', 'batch_to_realtime').replace('_', '_to_')
+            log_file = os.path.join(log_dir, f"{direction_str}_transition_{timestamp}.json")
             
             with open(log_file, 'w') as f:
                 json.dump(results, f, indent=2, default=str)
@@ -465,14 +591,60 @@ def transition_batch_to_realtime(config: Dict[str, Any],
     Returns:
         Dictionary with transition results
     """
-    logger.info("Starting batch-to-real-time transition process...")
+    return execute_transition(config, string_dict, field_hash_mapping, string_counts, 
+                             "batch_to_realtime", force)
+
+
+def transition_realtime_to_batch(config: Dict[str, Any], 
+                                string_dict: Dict[str, str],
+                                field_hash_mapping: Dict[str, Dict[str, int]],
+                                string_counts: Dict[str, int],
+                                force: bool = False) -> Dict[str, Any]:
+    """
+    Main function to execute real-time-to-batch transition.
+    
+    Args:
+        config: Configuration dictionary
+        string_dict: String hash to value mapping
+        field_hash_mapping: Hash to field type mapping
+        string_counts: Hash to frequency mapping
+        force: Force transition even if there are active real-time jobs
+        
+    Returns:
+        Dictionary with transition results
+    """
+    return execute_transition(config, string_dict, field_hash_mapping, string_counts, 
+                             "realtime_to_batch", force)
+
+
+def execute_transition(config: Dict[str, Any], 
+                      string_dict: Dict[str, str],
+                      field_hash_mapping: Dict[str, Dict[str, int]],
+                      string_counts: Dict[str, int],
+                      direction: str = "batch_to_realtime",
+                      force: bool = False) -> Dict[str, Any]:
+    """
+    Generic function to execute transitions between processing modes.
+    
+    Args:
+        config: Configuration dictionary
+        string_dict: String hash to value mapping
+        field_hash_mapping: Hash to field type mapping
+        string_counts: Hash to frequency mapping
+        direction: "batch_to_realtime" or "realtime_to_batch"
+        force: Force transition even if there are active jobs
+        
+    Returns:
+        Dictionary with transition results
+    """
+    logger.info(f"Starting {direction.replace('_', '-')} transition process...")
     
     controller = TransitionController(config)
     
     try:
         # Execute the transition
         results = controller.execute_transition(
-            string_dict, field_hash_mapping, string_counts, force
+            string_dict, field_hash_mapping, string_counts, direction, force
         )
         
         # Save transition log
@@ -498,9 +670,11 @@ if __name__ == "__main__":
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     
-    parser = argparse.ArgumentParser(description='Execute batch-to-real-time transition')
+    parser = argparse.ArgumentParser(description='Execute transitions between batch and real-time processing')
     parser.add_argument('--config', default='config.yml', help='Path to configuration file')
-    parser.add_argument('--force', action='store_true', help='Force transition even with active batch jobs')
+    parser.add_argument('--direction', choices=['batch_to_realtime', 'realtime_to_batch'], 
+                       default='batch_to_realtime', help='Direction of transition')
+    parser.add_argument('--force', action='store_true', help='Force transition even with active jobs')
     parser.add_argument('--analyze-only', action='store_true', help='Only perform pre-transition analysis')
     args = parser.parse_args()
     
@@ -551,12 +725,12 @@ if __name__ == "__main__":
                     print(f"  💡 {rec}")
         else:
             # Execute full transition
-            results = transition_batch_to_realtime(
-                config, string_dict, field_hash_mapping, string_counts, args.force
+            results = execute_transition(
+                config, string_dict, field_hash_mapping, string_counts, args.direction, args.force
             )
             
             print("\n" + "="*60)
-            print("BATCH-TO-REAL-TIME TRANSITION RESULTS")
+            print(f"{args.direction.replace('_', '-').upper()} TRANSITION RESULTS")
             print("="*60)
             print(f"Status: {results['status']}")
             
@@ -573,7 +747,10 @@ if __name__ == "__main__":
                         print(f"From Real-time Only: {cs['realtime_only_hashes']:,}")
                 
                 print("\n✅ Transition completed successfully!")
-                print("Real-time processing is now active with all batch progress preserved.")
+                if args.direction == "batch_to_realtime":
+                    print("Real-time processing is now active with all batch progress preserved.")
+                else:
+                    print("Batch processing is now active with all real-time progress preserved.")
             
             elif results['status'] == 'blocked':
                 print("\n❌ Transition blocked by pre-analysis issues")

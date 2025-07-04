@@ -1,14 +1,38 @@
-# 🔄 **Complete Guide: Switching from Batch to Real-Time Processing**
+# 🔄 **Complete Guide: Bidirectional Processing Mode Transitions**
 
-This guide covers the complete process of safely transitioning from batch processing to real-time processing, including background process management.
+This guide covers the complete process of safely transitioning between batch and real-time processing modes, including background process management.
 
 ## 📋 **Prerequisites**
 
+### For Batch → Real-Time Transition
 - You have a running batch process: `nohup python batch_manager.py --create`
 - You want to switch to real-time processing
 - You want to run real-time processing in the background
 
+### For Real-Time → Batch Transition  
+- You have a running real-time process: `nohup python main.py --start embedding_and_indexing`
+- You want to switch to batch processing for cost efficiency
+- You want better control over large-scale processing
+
 ---
+
+## 🎯 **Transition Workflows**
+
+Choose your transition path:
+
+### 🔄 **Option A: Batch → Real-Time** (Original workflow)
+**Use when:** You want faster processing and immediate results
+**Benefits:** Real-time feedback, faster individual requests
+**Considerations:** Higher per-token cost, daily rate limits
+
+### 🔄 **Option B: Real-Time → Batch** (New workflow)  
+**Use when:** You want cost efficiency and can wait for results
+**Benefits:** 50% cost reduction, larger batch processing capacity
+**Considerations:** 24-hour processing delays, less real-time feedback
+
+---
+
+## 🔄 **BATCH → REAL-TIME TRANSITION**
 
 ## 🛑 **Step 1: Stop the Running Batch Process**
 
@@ -84,7 +108,7 @@ python batch_manager.py --download
 
 ```bash
 # Analyze if the system is ready for transition
-python batch_manager.py --analyze-transition
+python src/transition_controller.py --analyze-only --direction batch_to_realtime
 ```
 
 **Expected Output:**
@@ -114,7 +138,7 @@ If you have few active jobs and want to preserve their progress:
 
 ```bash
 # Wait for active jobs to complete, then transition
-python batch_manager.py --switch-to-realtime
+python src/transition_controller.py --direction batch_to_realtime
 ```
 
 ### Option B: Force Immediate Transition
@@ -122,29 +146,23 @@ If you want to switch immediately and cancel active jobs:
 
 ```bash
 # Force transition (cancels active batch jobs)
-python batch_manager.py --switch-to-realtime --force
+python src/transition_controller.py --direction batch_to_realtime --force
 ```
 
 **Expected Output:**
 ```
-🚀 Switching from batch to real-time processing...
 ============================================================
-
-🔄 Executing transition (force=false)...
-
-📋 TRANSITION RESULTS
-==============================
+BATCH-TO-REALTIME TRANSITION RESULTS
+============================================================
 Status: completed
+Elapsed Time: 45.23 seconds
+
+Total Processed Hashes: 1,234,567
+From Batch Only: 1,200,000
+From Real-time Only: 34,567
+
 ✅ Transition completed successfully!
-⏱️  Elapsed Time: 45.23 seconds
-
-📊 FINAL STATE:
-   • Total processed hashes: 1,234,567
-   • From batch only: 1,200,000
-   • From real-time only: 34,567
-
-🚀 Real-time processing is now active!
-💡 You can now run: python main.py --config config.yml
+Real-time processing is now active with all batch progress preserved.
 ```
 
 ---
@@ -293,14 +311,17 @@ nohup python main.py --config config.yml --start embedding_and_indexing --end em
 
 ### If Transition Fails
 ```bash
-# Check what went wrong
-python batch_manager.py --analyze-transition
+# Check what went wrong (for either direction)
+python src/transition_controller.py --analyze-only --direction batch_to_realtime
+python src/transition_controller.py --analyze-only --direction realtime_to_batch
 
 # Force transition if safe to do so
-python batch_manager.py --switch-to-realtime --force
+python src/transition_controller.py --direction batch_to_realtime --force
+python src/transition_controller.py --direction realtime_to_batch --force
 
-# Or check batch status
-python batch_manager.py --status
+# Or check current status
+python batch_manager.py --status                    # For batch processing
+python main.py --status                            # For real-time processing
 ```
 
 ### If Real-Time Process Crashes
@@ -329,22 +350,143 @@ nohup python main.py --config config.yml --start embedding_and_indexing --end em
 
 ---
 
-## ✅ **Quick Reference Commands**
+## 🔄 **REAL-TIME → BATCH TRANSITION**
 
+## 🛑 **Step 1: Stop the Running Real-Time Process**
+
+### Find the Real-Time Process
 ```bash
-# Complete transition workflow
-kill [BATCH_PID]                                    # Stop batch process
-python batch_manager.py --status                    # Check status
-python batch_manager.py --download                  # Download completed results
-python batch_manager.py --analyze-transition        # Analyze readiness
-python batch_manager.py --switch-to-realtime        # Execute transition
-nohup python main.py --config config.yml --start embedding_and_indexing --end embedding_and_indexing > embedding_realtime.log 2>&1 &
-
-# Process management
-ps aux | grep "main.py"                            # Find process
-tail -f embedding_realtime.log                     # Monitor logs
-kill [REALTIME_PID]                                # Stop process
-python main.py --status                            # Check pipeline status
+# Find the running real-time process
+ps aux | grep "main.py"
 ```
 
-This complete workflow ensures a safe, monitored transition from batch to real-time processing with full background operation support!
+Example output:
+```
+user    67890  0.1  0.5  123456  67890 ?  S  10:30  0:05 python main.py --start embedding_and_indexing
+```
+
+### Kill the Process
+```bash
+# Replace 67890 with the actual PID from above
+kill 67890
+
+# If it doesn't stop gracefully within 30 seconds, force kill:
+kill -9 67890
+```
+
+### Verify Process is Stopped
+```bash
+# Check that the process is gone
+ps aux | grep "main.py"
+# Should show only the grep command itself
+```
+
+---
+
+## 🔍 **Step 2: Analyze Transition Readiness**
+
+```bash
+# Analyze if the system is ready for transition
+python src/transition_controller.py --analyze-only --direction realtime_to_batch
+```
+
+**Expected Output:**
+```
+============================================================
+PRE-TRANSITION ANALYSIS
+============================================================
+Transition Feasible: ✅ YES
+
+💡 RECOMMENDATIONS:
+   • Real-time processing will be safely terminated
+   • All progress will be preserved in batch mode
+   • Failed requests will be queued for batch retry
+```
+
+---
+
+## 🔄 **Step 3: Execute the Transition**
+
+```bash
+# Execute real-time to batch transition
+python src/transition_controller.py --direction realtime_to_batch
+```
+
+**Expected Output:**
+```
+============================================================
+REALTIME-TO-BATCH TRANSITION RESULTS
+============================================================
+Status: completed
+Elapsed Time: 15.67 seconds
+
+Total Processed Hashes: 1,234,567
+From Batch Only: 1,200,000
+From Real-time Only: 34,567
+
+✅ Transition completed successfully!
+Batch processing is now active with all real-time progress preserved.
+```
+
+---
+
+## 📦 **Step 4: Run Batch Processing**
+
+### Start Batch Processing
+```bash
+# Run batch processing in background
+nohup python batch_manager.py --create > batch_processing.log 2>&1 &
+```
+
+### Monitor Batch Status
+```bash
+# Check batch job status
+python batch_manager.py --status
+
+# Monitor logs
+tail -f batch_processing.log
+
+# Download completed results (when ready)
+python batch_manager.py --download
+```
+
+---
+
+## ✅ **Quick Reference Commands**
+
+### Batch → Real-Time Transition
+```bash
+# Complete batch-to-realtime workflow
+kill [BATCH_PID]                                    # Stop batch process
+python batch_manager.py --status                    # Check batch status  
+python batch_manager.py --download                  # Download completed results
+python src/transition_controller.py --analyze-only --direction batch_to_realtime  # Analyze readiness
+python src/transition_controller.py --direction batch_to_realtime                 # Execute transition
+nohup python main.py --config config.yml --start embedding_and_indexing --end embedding_and_indexing > embedding_realtime.log 2>&1 &
+```
+
+### Real-Time → Batch Transition  
+```bash
+# Complete realtime-to-batch workflow
+kill [REALTIME_PID]                                 # Stop real-time process
+python src/transition_controller.py --analyze-only --direction realtime_to_batch  # Analyze readiness
+python src/transition_controller.py --direction realtime_to_batch                 # Execute transition
+nohup python batch_manager.py --create > batch_processing.log 2>&1 &              # Start batch processing
+```
+
+### General Process Management
+```bash
+# Find processes
+ps aux | grep "main.py"                            # Find real-time process
+ps aux | grep "batch_manager.py"                   # Find batch process
+
+# Monitor logs
+tail -f embedding_realtime.log                     # Monitor real-time logs
+tail -f batch_processing.log                       # Monitor batch logs
+
+# Check status
+python main.py --status                            # Check pipeline status
+python batch_manager.py --status                   # Check batch status
+```
+
+This complete workflow ensures safe, monitored transitions between batch and real-time processing with full background operation support!
