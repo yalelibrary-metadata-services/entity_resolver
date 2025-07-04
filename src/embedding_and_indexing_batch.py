@@ -1182,20 +1182,29 @@ class BatchEmbeddingPipeline:
         Args:
             checkpoint_dir: Directory containing checkpoint files
         """
-        # Load processed hashes if checkpoint exists
-        processed_hashes_path = os.path.join(checkpoint_dir, 'batch_processed_hashes.pkl')
+        # Load processed hashes - check for consolidated file first, then batch-specific
+        consolidated_hashes_path = os.path.join(checkpoint_dir, 'processed_hashes.pkl')
+        batch_hashes_path = os.path.join(checkpoint_dir, 'batch_processed_hashes.pkl')
         batch_jobs_path = os.path.join(checkpoint_dir, 'batch_jobs.pkl')
         blacklisted_files_path = os.path.join(checkpoint_dir, 'batch_blacklisted_files.pkl')
         queue_state_path = os.path.join(checkpoint_dir, 'batch_queue_state.pkl')
         failed_requests_path = os.path.join(checkpoint_dir, 'batch_failed_requests.pkl')
         
-        if os.path.exists(processed_hashes_path):
+        # Load processed hashes - prioritize consolidated state from transition
+        if os.path.exists(consolidated_hashes_path):
             try:
-                with open(processed_hashes_path, 'rb') as f:
+                with open(consolidated_hashes_path, 'rb') as f:
                     self.processed_hashes = set(pickle.load(f))
-                logger.info(f"Loaded {len(self.processed_hashes)} processed hashes from checkpoint")
+                logger.info(f"Loaded {len(self.processed_hashes)} consolidated processed hashes from transition")
             except Exception as e:
-                logger.error(f"Error loading processed hashes: {str(e)}")
+                logger.error(f"Error loading consolidated processed hashes: {str(e)}")
+        elif os.path.exists(batch_hashes_path):
+            try:
+                with open(batch_hashes_path, 'rb') as f:
+                    self.processed_hashes = set(pickle.load(f))
+                logger.info(f"Loaded {len(self.processed_hashes)} batch-only processed hashes from checkpoint")
+            except Exception as e:
+                logger.error(f"Error loading batch processed hashes: {str(e)}")
                 self.processed_hashes = set()
         
         # Load blacklisted files to avoid reprocessing
@@ -1208,14 +1217,23 @@ class BatchEmbeddingPipeline:
                 logger.error(f"Error loading blacklisted files: {str(e)}")
                 self.blacklisted_files = set()
         
-        # Load failed requests for retry tracking
-        if os.path.exists(failed_requests_path):
+        # Load failed requests for retry tracking - check consolidated file first
+        consolidated_failed_path = os.path.join(checkpoint_dir, 'realtime_failed_requests.pkl')
+        if os.path.exists(consolidated_failed_path):
+            try:
+                with open(consolidated_failed_path, 'rb') as f:
+                    self.failed_requests = pickle.load(f)
+                logger.info(f"Loaded {len(self.failed_requests)} consolidated failed requests for retry tracking")
+            except Exception as e:
+                logger.error(f"Error loading consolidated failed requests: {str(e)}")
+                self.failed_requests = {}
+        elif os.path.exists(failed_requests_path):
             try:
                 with open(failed_requests_path, 'rb') as f:
                     self.failed_requests = pickle.load(f)
-                logger.info(f"Loaded {len(self.failed_requests)} failed requests for retry tracking")
+                logger.info(f"Loaded {len(self.failed_requests)} batch-only failed requests for retry tracking")
             except Exception as e:
-                logger.error(f"Error loading failed requests: {str(e)}")
+                logger.error(f"Error loading batch failed requests: {str(e)}")
                 self.failed_requests = {}
         
         if os.path.exists(batch_jobs_path):
