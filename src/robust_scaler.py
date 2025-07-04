@@ -291,6 +291,13 @@ class LibraryCatalogScaler:
                 "percentile": 100,  # No clipping
             },
             
+            # Categorical features - preserve exact discrete values
+            "categorical_features": {
+                "patterns": ["taxonomy_dissimilarity"],
+                "range": (0, 1),
+                "percentile": 100,  # No clipping - preserve categorical values
+            },
+            
             # Role-related features
             "role_features": {
                 "patterns": ["title_role_adjusted"],
@@ -393,41 +400,59 @@ class LibraryCatalogScaler:
                 group_feature_names = [feature_names[i] for i in group_features]
                 group_data = X_array[:, group_features]
                 
-                # Special handling for binary features (no scaling needed)
-                if group_name == "binary_features":
-                    # Skip scaling for binary features, but ensure correct values
-                    logger.info(f"Binary features will not be scaled: {group_feature_names}")
-                    
-                    # Binary indicators should be already correct values
-                    # Audit the feature values to ensure they are valid (0.0 or 1.0)
-                    for i, name in enumerate(group_feature_names):
-                        col_data = group_data[:, i]
-                        unique_values = np.unique(col_data)
+                # Special handling for binary and categorical features (no scaling needed)
+                if group_name in ["binary_features", "categorical_features"]:
+                    if group_name == "categorical_features":
+                        # Skip scaling for categorical features, preserve exact values
+                        logger.info(f"Categorical features will not be scaled: {group_feature_names}")
                         
-                        # Check for invalid values
-                        is_binary = np.all(np.isin(unique_values, [0.0, 1.0]))
-                        if not is_binary:
-                            logger.warning(f"Binary feature '{name}' contains non-binary values: {unique_values}")
-                            logger.warning(f"This may indicate a calculation issue in the feature engineering pipeline")
+                        # Validate categorical feature values (especially taxonomy_dissimilarity)
+                        for i, name in enumerate(group_feature_names):
+                            col_data = group_data[:, i]
+                            unique_values = np.unique(col_data)
                             
-                            # CRITICAL FIX: For binary indicator features, ensure values are exactly 0.0 or 1.0
-                            # This is crucial for consistent classification behavior
-                            if "indicator" in name.lower() or "match" in name.lower():
-                                logger.info(f"CRITICAL FIX: Converting binary feature '{name}' to exact binary values")
-                                corrected_values = np.zeros_like(col_data)
-                                corrected_values[col_data >= 0.5] = 1.0
-                                group_data[:, i] = corrected_values
-                                
-                                # Verify fix worked
-                                fixed_values = np.unique(group_data[:, i])
-                                is_binary_now = np.all(np.isin(fixed_values, [0.0, 1.0]))
-                                if is_binary_now:
-                                    logger.info(f"Successfully fixed binary values for {name}")
+                            if "taxonomy" in name.lower():
+                                expected_values = {0.0, 0.15, 0.4}
+                                if not set(unique_values).issubset(expected_values):
+                                    logger.warning(f"Categorical feature '{name}' contains unexpected values: {unique_values}")
+                                    logger.warning(f"Expected values: {expected_values}")
                                 else:
-                                    logger.error(f"Failed to fix binary values for {name}: {fixed_values}")
+                                    logger.info(f"Categorical feature '{name}' validated with values: {sorted(unique_values)}")
                     
-                    # Store the corrected binary features data in the feature engineering cache for reference
-                    self._binary_features_data = group_data.copy()
+                    else:  # binary_features
+                        # Skip scaling for binary features, but ensure correct values
+                        logger.info(f"Binary features will not be scaled: {group_feature_names}")
+                        
+                        # Binary indicators should be already correct values
+                        # Audit the feature values to ensure they are valid (0.0 or 1.0)
+                        for i, name in enumerate(group_feature_names):
+                            col_data = group_data[:, i]
+                            unique_values = np.unique(col_data)
+                            
+                            # Check for invalid values
+                            is_binary = np.all(np.isin(unique_values, [0.0, 1.0]))
+                            if not is_binary:
+                                logger.warning(f"Binary feature '{name}' contains non-binary values: {unique_values}")
+                                logger.warning(f"This may indicate a calculation issue in the feature engineering pipeline")
+                                
+                                # CRITICAL FIX: For binary indicator features, ensure values are exactly 0.0 or 1.0
+                                # This is crucial for consistent classification behavior
+                                if "indicator" in name.lower() or "match" in name.lower():
+                                    logger.info(f"CRITICAL FIX: Converting binary feature '{name}' to exact binary values")
+                                    corrected_values = np.zeros_like(col_data)
+                                    corrected_values[col_data >= 0.5] = 1.0
+                                    group_data[:, i] = corrected_values
+                                    
+                                    # Verify fix worked
+                                    fixed_values = np.unique(group_data[:, i])
+                                    is_binary_now = np.all(np.isin(fixed_values, [0.0, 1.0]))
+                                    if is_binary_now:
+                                        logger.info(f"Successfully fixed binary values for {name}")
+                                    else:
+                                        logger.error(f"Failed to fix binary values for {name}: {fixed_values}")
+                        
+                        # Store the corrected binary features data in the feature engineering cache for reference
+                        self._binary_features_data = group_data.copy()
                     
                     # Store None as the scaler to indicate no scaling
                 else:
@@ -483,41 +508,57 @@ class LibraryCatalogScaler:
             if not indices:
                 continue
             
-            # Skip binary features (no scaling, but ensure correct values)
-            if group_name == "binary_features" or self.scalers[group_name] is None:
-                # CRITICAL: Ensure binary features are handled correctly and consistently
+            # Skip binary and categorical features (no scaling, preserve exact values)
+            if group_name in ["binary_features", "categorical_features"] or self.scalers[group_name] is None:
+                # Handle binary and categorical features appropriately
                 for i, idx in enumerate(indices):
                     feature_name = self.feature_names[idx] if idx < len(self.feature_names) else f"feature_{idx}"
                     col_data = X_array[:, idx]
                     
-                    # Always handle binary features consistently
-                    # The lack of consistent handling may be causing our critical entity matching problem
-                    if "indicator" in feature_name.lower() or "match" in feature_name.lower():
-                        # For indicator and match features, we need exact binary values
-                        logger.debug(f"Processing binary feature '{feature_name}' with threshold 0.5")
+                    if group_name == "categorical_features":
+                        # For categorical features like taxonomy_dissimilarity, preserve exact values
+                        # Expected values: {0.0, 0.15, 0.4} for taxonomy dissimilarity
+                        X_scaled[:, idx] = col_data.copy()
                         
-                        # Apply strict binary conversion (exactly 0.0 or 1.0)
-                        binary_values = np.zeros_like(col_data)
-                        binary_values[col_data >= 0.5] = 1.0
-                        X_scaled[:, idx] = binary_values
-                        
-                        # Check for any values that were changed significantly
-                        significant_changes = np.abs(binary_values - col_data) > 0.1
-                        if np.any(significant_changes):
-                            changed_count = np.sum(significant_changes)
-                            original_values = col_data[significant_changes]
-                            logger.info(f"BINARY FIX: Corrected {changed_count} values in '{feature_name}' from non-binary to binary")
-                            logger.debug(f"  Original values: {original_values[:5]} (showing up to 5)")
-                    else:
-                        # For other binary features, still ensure correct values
+                        # Validate categorical values (optional validation)
                         unique_values = np.unique(col_data)
-                        if not np.all(np.isin(unique_values, [0.0, 1.0])):
-                            logger.warning(f"Fixing non-binary values in '{feature_name}' during transform: {unique_values}")
+                        if "taxonomy" in feature_name.lower():
+                            expected_values = {0.0, 0.15, 0.4}
+                            unexpected = set(unique_values) - expected_values
+                            if unexpected:
+                                logger.warning(f"Categorical feature '{feature_name}' contains unexpected values: {unexpected}")
+                        
+                        logger.debug(f"Preserved categorical feature '{feature_name}' with values: {unique_values}")
+                        
+                    else:  # binary_features
+                        # Always handle binary features consistently
+                        # The lack of consistent handling may be causing our critical entity matching problem
+                        if "indicator" in feature_name.lower() or "match" in feature_name.lower():
+                            # For indicator and match features, we need exact binary values
+                            logger.debug(f"Processing binary feature '{feature_name}' with threshold 0.5")
                             
-                            # Fix non-binary values
-                            fixed_values = np.zeros_like(col_data)
-                            fixed_values[col_data >= 0.5] = 1.0
-                            X_scaled[:, idx] = fixed_values
+                            # Apply strict binary conversion (exactly 0.0 or 1.0)
+                            binary_values = np.zeros_like(col_data)
+                            binary_values[col_data >= 0.5] = 1.0
+                            X_scaled[:, idx] = binary_values
+                            
+                            # Check for any values that were changed significantly
+                            significant_changes = np.abs(binary_values - col_data) > 0.1
+                            if np.any(significant_changes):
+                                changed_count = np.sum(significant_changes)
+                                original_values = col_data[significant_changes]
+                                logger.info(f"BINARY FIX: Corrected {changed_count} values in '{feature_name}' from non-binary to binary")
+                                logger.debug(f"  Original values: {original_values[:5]} (showing up to 5)")
+                        else:
+                            # For other binary features, still ensure correct values
+                            unique_values = np.unique(col_data)
+                            if not np.all(np.isin(unique_values, [0.0, 1.0])):
+                                logger.warning(f"Fixing non-binary values in '{feature_name}' during transform: {unique_values}")
+                                
+                                # Fix non-binary values
+                                fixed_values = np.zeros_like(col_data)
+                                fixed_values[col_data >= 0.5] = 1.0
+                                X_scaled[:, idx] = fixed_values
                 continue
             
             # Extract group data
@@ -669,209 +710,4 @@ def deserialize_scaler(input_path, config):
     return scaler
 
 
-class ScalingEvaluator:
-    """
-    Evaluates the effectiveness of scaling strategies for entity resolution.
-    
-    Provides metrics and visualizations to analyze how scaling affects
-    feature distributions and classification performance.
-    """
-    
-    def __init__(self, config):
-        """
-        Initialize with configuration.
-        
-        Args:
-            config: Configuration dictionary
-        """
-        self.config = config
-    
-    def evaluate_scaling(self, X_original, X_scaled, feature_names, y_true=None):
-        """
-        Evaluate effectiveness of scaling strategy.
-        
-        Args:
-            X_original: Original feature values
-            X_scaled: Scaled feature values
-            feature_names: Names of features
-            y_true: True match labels if available
-            
-        Returns:
-            Dictionary of evaluation metrics
-        """
-        metrics = {}
-        
-        # Calculate basic distribution statistics
-        metrics["distribution"] = self._analyze_distributions(X_original, X_scaled, feature_names)
-        
-        # Calculate feature separation power (if labels available)
-        if y_true is not None:
-            metrics["separation"] = self._analyze_feature_separation(X_scaled, feature_names, y_true)
-            
-        # Analyze correlation between features
-        metrics["correlation"] = self._analyze_feature_correlation(X_scaled, feature_names)
-        
-        # Calculate information retention
-        metrics["info_retention"] = self._analyze_information_retention(X_original, X_scaled, feature_names)
-        
-        return metrics
-    
-    def _analyze_distributions(self, X_original, X_scaled, feature_names):
-        """
-        Analyze distribution changes from scaling.
-        
-        Args:
-            X_original: Original feature values
-            X_scaled: Scaled feature values
-            feature_names: Names of features
-            
-        Returns:
-            Dictionary of distribution metrics
-        """
-        from scipy.stats import skew, kurtosis
-        
-        distribution_metrics = {}
-        
-        for i, name in enumerate(feature_names):
-            orig_vals = X_original[:, i]
-            scaled_vals = X_scaled[:, i]
-            
-            # Calculate distribution statistics
-            distribution_metrics[name] = {
-                "original": {
-                    "min": float(np.min(orig_vals)),
-                    "max": float(np.max(orig_vals)),
-                    "mean": float(np.mean(orig_vals)),
-                    "median": float(np.median(orig_vals)),
-                    "std": float(np.std(orig_vals)),
-                    "skew": float(skew(orig_vals)),
-                    "kurtosis": float(kurtosis(orig_vals))
-                },
-                "scaled": {
-                    "min": float(np.min(scaled_vals)),
-                    "max": float(np.max(scaled_vals)),
-                    "mean": float(np.mean(scaled_vals)),
-                    "median": float(np.median(scaled_vals)),
-                    "std": float(np.std(scaled_vals)),
-                    "skew": float(skew(scaled_vals)),
-                    "kurtosis": float(kurtosis(scaled_vals))
-                }
-            }
-            
-        return distribution_metrics
-    
-    def _analyze_feature_separation(self, X_scaled, feature_names, y_true):
-        """
-        Analyze how well scaled features separate matches from non-matches.
-        
-        Args:
-            X_scaled: Scaled feature values
-            feature_names: Names of features
-            y_true: True match labels
-            
-        Returns:
-            Dictionary of separation metrics
-        """
-        from sklearn.metrics import roc_auc_score
-        
-        separation_metrics = {}
-        
-        # Split data by match status
-        X_match = X_scaled[y_true == 1]
-        X_non_match = X_scaled[y_true == 0]
-        
-        for i, name in enumerate(feature_names):
-            match_vals = X_match[:, i] if X_match.size > 0 else np.array([])
-            non_match_vals = X_non_match[:, i] if X_non_match.size > 0 else np.array([])
-            
-            # Skip if either class has no samples
-            if len(match_vals) == 0 or len(non_match_vals) == 0:
-                separation_metrics[name] = {
-                    "error": "Insufficient samples for separation analysis"
-                }
-                continue
-            
-            # Calculate separation metrics
-            try:
-                # Calculate AUC for this feature
-                auc = float(roc_auc_score(y_true, X_scaled[:, i]))
-            except:
-                auc = 0.5  # Default if calculation fails
-            
-            # Calculate effect size (Cohen's d)
-            pooled_std = np.sqrt((np.var(match_vals) + np.var(non_match_vals)) / 2)
-            effect_size = float((np.mean(match_vals) - np.mean(non_match_vals)) / pooled_std) if pooled_std > 0 else 0.0
-            
-            separation_metrics[name] = {
-                "match_mean": float(np.mean(match_vals)),
-                "non_match_mean": float(np.mean(non_match_vals)),
-                "mean_difference": float(np.mean(match_vals) - np.mean(non_match_vals)),
-                "effect_size": effect_size,
-                "auc": auc
-            }
-            
-        return separation_metrics
-    
-    def _analyze_feature_correlation(self, X_scaled, feature_names):
-        """
-        Analyze correlation between scaled features.
-        
-        Args:
-            X_scaled: Scaled feature values
-            feature_names: Names of features
-            
-        Returns:
-            Dictionary with correlation matrix
-        """
-        # Calculate correlation matrix
-        corr_matrix = np.corrcoef(X_scaled, rowvar=False)
-        
-        # Convert to dictionary format
-        correlation = {
-            "matrix": corr_matrix.tolist(),
-            "feature_names": feature_names
-        }
-        
-        return correlation
-    
-    def _analyze_information_retention(self, X_original, X_scaled, feature_names):
-        """
-        Analyze information retention after scaling.
-        
-        Args:
-            X_original: Original feature values
-            X_scaled: Scaled feature values
-            feature_names: Names of features
-            
-        Returns:
-            Dictionary of information retention metrics
-        """
-        retention_metrics = {}
-        
-        for i, name in enumerate(feature_names):
-            orig_vals = X_original[:, i]
-            scaled_vals = X_scaled[:, i]
-            
-            # Calculate rank correlation (Spearman's rho)
-            # This measures how well the ordering of values is preserved
-            from scipy.stats import spearmanr
-            try:
-                rho, p_value = spearmanr(orig_vals, scaled_vals)
-            except:
-                rho, p_value = 0.0, 1.0
-            
-            # Calculate mutual information
-            # This measures how much information is shared between variables
-            from sklearn.feature_selection import mutual_info_regression
-            try:
-                mi = mutual_info_regression(orig_vals.reshape(-1, 1), scaled_vals)[0]
-            except:
-                mi = 0.0
-            
-            retention_metrics[name] = {
-                "rank_correlation": float(rho),
-                "rank_correlation_p_value": float(p_value),
-                "mutual_information": float(mi)
-            }
-            
-        return retention_metrics
+# ScalingEvaluator has been moved to scaling_integration.py for better separation of concerns

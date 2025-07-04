@@ -1,6 +1,6 @@
 # Entity Resolution Pipeline for Yale University Library Catalog
 
-A production-ready system for identifying and resolving person entities across MARC 21 library catalog records. The pipeline combines vector embeddings, feature engineering, and machine learning to achieve **99.55% precision** and **82.48% recall** on real library data.
+A production-ready system for identifying and resolving person entities across MARC 21 library catalog records. The pipeline combines vector embeddings, feature engineering, and machine learning to achieve **99.75% precision** and **82.48% recall** on real library data.
 
 ## 🚀 Quick Start
 
@@ -77,10 +77,9 @@ python main.py --status
 ## 📊 Performance Overview
 
 ### Production Results (14,930 test pairs)
-- **Precision**: 99.55% (extremely low false positive rate)
+- **Precision**: 99.75% (extremely low false positive rate)
 - **Recall**: 82.48% (captures majority of true matches)
-- **F1-Score**: 90.22% (balanced performance)
-- **Specificity**: 98.43% (excellent negative class accuracy)
+- **F1-Score**: 90.29% (balanced performance)
 
 ### Computational Efficiency
 - **99.23% reduction** in pairwise comparisons through vector similarity
@@ -452,11 +451,10 @@ The system generates comprehensive analysis including:
 
 ### Performance Metrics
 ```
-Precision: 99.55% (9,955 TP, 45 FP)
-Recall: 82.48% (2,114 FN, 9,955 TP)  
-F1-Score: 90.22%
-Accuracy: 85.54%
-Specificity: 98.43%
+Precision: 99.75% (9,935 TP, 25 FP)
+Recall: 82.48% (2,111 FN, 9,935 TP)  
+F1-Score: 90.29%
+Accuracy: 85.69%
 ```
 
 ## 🚀 Advanced Usage
@@ -596,7 +594,7 @@ Key classes and their responsibilities:
 ## 🎯 Project Status & Roadmap
 
 ### ✅ **PRODUCTION-READY SYSTEM**
-- **Core Pipeline**: 99.55% precision entity resolution with comprehensive feature engineering
+- **Core Pipeline**: 99.75% precision entity resolution with comprehensive feature engineering
 - **Automated Batch Processing**: Bulletproof quota management with zero manual intervention required
 - **Subject Enhancement**: Quality audit and imputation using vector similarity analysis
 - **Environment Adaptation**: Automatic local vs. production resource allocation

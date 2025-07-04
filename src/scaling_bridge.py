@@ -21,7 +21,7 @@ Architectural Design Principles:
 import logging
 import numpy as np
 import os
-import types
+import time
 from typing import Dict, List, Optional, Any, Union, Tuple
 from enum import Enum
 
@@ -88,10 +88,6 @@ class ScalingBridge:
             logger.warning("Feature registry not found or empty, using empty feature list")
             self.feature_names = []
         
-        # Store original scaler for reference and potential restoration
-        self.original_scaler = feature_engineering.scaler
-        self.original_normalize_method = feature_engineering.normalize_features
-        
         logger.info(f"Connected to feature engineering with {len(self.feature_names)} features")
         return self
     
@@ -132,7 +128,7 @@ class ScalingBridge:
     
     def apply(self, strategy: Optional[Union[str, ScalingStrategy]] = None) -> FeatureEngineering:
         """
-        Apply selected scaling strategy to feature engineering.
+        Apply selected scaling strategy to feature engineering with clean delegation.
         
         Args:
             strategy: Optional explicit strategy to use (overrides evaluated best strategy)
@@ -164,17 +160,14 @@ class ScalingBridge:
             logger.error(f"Could not obtain valid scaler for strategy: {self.scaler_state['strategy']}")
             return self.feature_engineering
             
-        # Update feature engineering with new scaler
-        self.feature_engineering.scaler = scaler
-        self.feature_engineering.is_fitted = False
-        
-        # Replace normalization method with enhanced version
-        self._inject_enhanced_normalization()
+        # Store scaler for delegation
+        self.scaler = scaler
         
         # Update state
         self.scaler_state["is_active"] = True
         self.scaler_state["feature_count"] = len(self.feature_names)
         
+        logger.info(f"Applied {self.scaler_state['strategy']} scaling strategy with clean delegation")
         return self.feature_engineering
         
     def apply_with_fitted_scaler(self, strategy: Optional[Union[str, ScalingStrategy]] = None) -> FeatureEngineering:
@@ -202,27 +195,32 @@ class ScalingBridge:
             self.scaler_state["strategy"] = "library_catalog"
             logger.info(f"Using default scaling strategy: library_catalog")
         
-        # Validate scaler is already fitted
-        if not hasattr(self.feature_engineering, 'scaler') or not hasattr(self.feature_engineering.scaler, 'is_fitted'):
-            logger.warning("Scaler is not fitted; consistency with training cannot be guaranteed")
-        elif not getattr(self.feature_engineering.scaler, 'is_fitted', False):
-            logger.warning("Scaler reports it is not fitted; consistency with training cannot be guaranteed")
+        # Get the fitted scaler
+        scaler = self._get_validated_scaler()
+        if not scaler:
+            logger.error(f"Could not obtain valid scaler for strategy: {self.scaler_state['strategy']}")
+            return self.feature_engineering
             
-        # Inject enhanced normalization method that ensures fitted scaler is used
-        self._inject_enhanced_normalization_without_refitting()
+        # Validate scaler is already fitted
+        if not hasattr(scaler, 'scalers') or not scaler.scalers:
+            logger.warning("Scaler is not fitted; consistency with training cannot be guaranteed")
+            
+        # Store scaler for delegation (production mode)
+        self.scaler = scaler
         
         # Update state
         self.scaler_state["is_active"] = True
         self.scaler_state["feature_count"] = len(self.feature_names)
         
+        logger.info(f"Applied pre-fitted {self.scaler_state['strategy']} scaler with clean delegation")
         return self.feature_engineering
     
     def reset(self) -> FeatureEngineering:
         """
-        Reset feature engineering to original scaling state.
+        Reset feature engineering to use built-in scaling.
         
         Returns:
-            Feature engineering instance with original scaling
+            Feature engineering instance
         """
         if self.feature_engineering is None:
             logger.warning("No feature engineering instance to reset")
@@ -232,18 +230,14 @@ class ScalingBridge:
             logger.info("No active scaling to reset")
             return self.feature_engineering
             
-        # Restore original components
-        self.feature_engineering.scaler = self.original_scaler
-        self.feature_engineering.is_fitted = False
-        self.feature_engineering.normalize_features = types.MethodType(
-            self.original_normalize_method.__func__, 
-            self.feature_engineering
-        )
+        # Clear scaling bridge scaler reference
+        if hasattr(self, 'scaler'):
+            delattr(self, 'scaler')
         
         # Update state
         self.scaler_state["is_active"] = False
         
-        logger.info("Successfully reset to original scaling configuration")
+        logger.info("Successfully reset scaling configuration")
         return self.feature_engineering
     
     def get_metadata(self) -> Dict[str, Any]:
@@ -350,243 +344,118 @@ class ScalingBridge:
             
         return scaler
     
-    def _inject_enhanced_normalization(self) -> None:
+    def normalize_features(self, feature_vectors: np.ndarray, fit: bool = False) -> np.ndarray:
         """
-        Inject enhanced normalization method into feature engineering.
-        Uses a clean implementation with proper error handling and fallbacks.
+        Clean delegation-based normalization using LibraryCatalogScaler.
+        
+        Args:
+            feature_vectors: Feature vectors to normalize
+            fit: Whether to fit the scaler on this data
+            
+        Returns:
+            Normalized feature vectors
         """
-        # Store key references in local variables to avoid closure issues
-        strategy = self.scaler_state.get("strategy")
-        feature_names = self.feature_names.copy()  # Avoid reference issues
-        original_normalize = self.original_normalize_method
+        # Ensure we have a valid scaler
+        if not hasattr(self, 'scaler') or self.scaler is None:
+            scaler = self._get_validated_scaler()
+            if not scaler:
+                logger.error("Could not obtain valid scaler")
+                return feature_vectors.copy()
+            self.scaler = scaler
         
-        # Define enhanced normalization function
-        def enhanced_normalize(self, feature_vectors, fit=False):
-            """
-            Enhanced feature normalization with improved scaling and error handling.
+        # Early exit for empty input
+        if feature_vectors.size == 0:
+            return feature_vectors.copy()
             
-            Args:
-                feature_vectors: Feature vectors to normalize
-                fit: Whether to fit the scaler on this data
-                
-            Returns:
-                Normalized feature vectors
-            """
-            # Early exit for empty input
-            if feature_vectors.size == 0:
-                return feature_vectors
-                
-            # Feature vector validation and preprocessing
-            if not isinstance(feature_vectors, np.ndarray):
-                try:
-                    feature_vectors = np.array(feature_vectors, dtype=np.float32)
-                except Exception as e:
-                    logger.error(f"Failed to convert input to numpy array: {e}")
-                    return feature_vectors
+        try:
+            # Ensure we have feature names
+            if not self.feature_names and hasattr(self.feature_engineering, 'feature_registry'):
+                self.feature_names = list(self.feature_engineering.feature_registry.keys())
             
-            # Handle NaN and infinity values
-            if np.isnan(feature_vectors).any() or np.isinf(feature_vectors).any():
-                logger.warning("Input contains NaN/Inf values, applying automatic cleaning")
-                feature_vectors = np.nan_to_num(feature_vectors, nan=0.0, posinf=1.0, neginf=0.0)
-            
-            # Scaling with error handling
-            try:
-                # Use appropriate method based on strategy
-                if fit or not self.is_fitted:
-                    # Fit transform based on strategy type
-                    # Call the appropriate fit_transform method for the scaler
-                    if hasattr(self.scaler, 'fit_transform') and callable(getattr(self.scaler, 'fit_transform')):
-                        if strategy == 'library_catalog' or isinstance(self.scaler, LibraryCatalogScaler):
-                            X_scaled = self.scaler.fit_transform(feature_vectors, feature_names)
-                        else:
-                            X_scaled = self.scaler.fit_transform(feature_vectors)
-                    
-                    self.is_fitted = True
-                    logger.debug(f"Fitted {strategy} scaler with input data")
+            # Apply scaling using LibraryCatalogScaler
+            if fit:
+                scaled_features = self.scaler.fit_transform(feature_vectors, self.feature_names)
+                logger.debug(f"Fitted and transformed features using {self.scaler_state.get('strategy', 'library_catalog')}")
+            else:
+                # Check if scaler is fitted
+                if hasattr(self.scaler, 'scalers') and self.scaler.scalers:
+                    scaled_features = self.scaler.transform(feature_vectors)
                 else:
-                    # Transform only
-                    # Call the appropriate transform method for the scaler
-                    if hasattr(self.scaler, 'transform') and callable(getattr(self.scaler, 'transform')):
-                        if strategy == 'library_catalog' or isinstance(self.scaler, LibraryCatalogScaler):
-                            X_scaled = self.scaler.transform(feature_vectors)
-                        else:
-                            X_scaled = self.scaler.transform(feature_vectors)
-                
-                # Validate output - ensure no NaN/Inf values
-                if np.isnan(X_scaled).any() or np.isinf(X_scaled).any():
-                    logger.warning("Scaling produced invalid values, applying correction")
-                    X_scaled = np.nan_to_num(X_scaled, nan=0.5, posinf=1.0, neginf=0.0)
-                
-                # Ensure output is in expected range [0,1]
-                X_scaled = np.clip(X_scaled, 0.0, 1.0)
-                
-                # CRITICAL FIX: Validate and fix binary features, ensuring consistent handling
-                # This is especially important for person_low_levenshtein_indicator and person_low_jaro_winkler_indicator
-                # which are crucial for matching entities like '16044224#Agent700-36' and '7732682#Agent700-29'
-                if hasattr(self.scaler, '_validate_binary_features'):
-                    # If scaler has built-in binary validation
-                    X_scaled = self.scaler._validate_binary_features(X_scaled, feature_vectors)
-                elif hasattr(self, '_owner') and hasattr(self._owner, '_validate_binary_features'):
-                    # If we're in a method bound to feature_engineering with parent ScalingBridge
-                    X_scaled = self._owner._validate_binary_features(X_scaled, feature_vectors, feature_names)
-                else:
-                    # Fallback direct validation for critical features if custom methods not available
-                    # Find and validate key binary indicator features
-                    if feature_names is not None:
-                        for i, name in enumerate(feature_names):
-                            if i < X_scaled.shape[1] and ("indicator" in name.lower() or "match" in name.lower()):
-                                # Force exact binary values (0.0 or 1.0)
-                                orig_col = feature_vectors[:, i]
-                                binary_values = np.zeros_like(orig_col)
-                                binary_values[orig_col >= 0.5] = 1.0
-                                X_scaled[:, i] = binary_values
-                
-                return X_scaled
-                
-            except Exception as e:
-                logger.error(f"Error in enhanced scaling: {str(e)}, using fallback")
-                
-                # Fall back to original normalization method
-                try:
-                    return original_normalize(self, feature_vectors, fit=fit)
-                except Exception as fallback_error:
-                    logger.error(f"Fallback scaling also failed: {fallback_error}")
-                    # Last resort: return input with simple clipping
-                    return np.clip(feature_vectors, 0.0, 1.0)
-        
-        # Bind enhanced method to feature engineering instance
-        self.feature_engineering.normalize_features = types.MethodType(
-            enhanced_normalize, self.feature_engineering
-        )
-        
-        # CRITICAL FIX: Set owner reference in feature engineering to access validation methods
-        self.feature_engineering._owner = self
-        
-        logger.info(f"Injected enhanced normalization method with {strategy} strategy")
+                    # Scaler not fitted, perform fit_transform
+                    scaled_features = self.scaler.fit_transform(feature_vectors, self.feature_names)
+                    logger.debug("Scaler not fitted, performing fit_transform")
+            
+            return scaled_features
+            
+        except Exception as e:
+            logger.error(f"Error in ScalingBridge normalization: {str(e)}")
+            return feature_vectors.copy()
     
-    def _inject_enhanced_normalization_without_refitting(self) -> None:
+    def normalize_features_production(self, feature_vectors: np.ndarray) -> np.ndarray:
         """
-        Inject enhanced normalization method that never refits the scaler.
-        This ensures consistent scaling with training.
+        Production normalization that never refits the scaler.
+        Always uses the pre-fitted scaler from training.
+        
+        Args:
+            feature_vectors: Feature vectors to normalize
+            
+        Returns:
+            Normalized feature vectors using pre-fitted scaler
         """
-        # Store key references for closure
-        strategy = self.scaler_state.get("strategy")
-        feature_names = self.feature_names.copy()
-        original_normalize = self.original_normalize_method
-        
-        # Store binary features list for validation
-        binary_features = []
-        for i, name in enumerate(feature_names):
-            if "indicator" in name.lower() or "match" in name.lower():
-                binary_features.append(name)
-        
-        def enhanced_normalize_production(self, feature_vectors, fit=False):
-            """
-            Enhanced normalization for production that never refits.
-            Always uses the pre-fitted scaler from training.
+        # Ensure we have a valid fitted scaler
+        if not hasattr(self, 'scaler') or self.scaler is None:
+            logger.error("No fitted scaler available for production normalization")
+            return feature_vectors.copy()
             
-            Args:
-                feature_vectors: Feature vectors to normalize
-                fit: Ignored - always uses pre-fitted scaler
-                
-            Returns:
-                Normalized feature vectors
-            """
-            # Validation and preprocessing
-            if feature_vectors.size == 0:
-                return feature_vectors
-                
-            if not isinstance(feature_vectors, np.ndarray):
-                try:
-                    feature_vectors = np.array(feature_vectors, dtype=np.float32)
-                except Exception as e:
-                    logger.error(f"Failed to convert input to numpy array: {e}")
-                    return feature_vectors
+        # Check if scaler is fitted
+        if not hasattr(self.scaler, 'scalers') or not self.scaler.scalers:
+            logger.error("Scaler is not fitted for production use")
+            return feature_vectors.copy()
+        
+        # Early exit for empty input
+        if feature_vectors.size == 0:
+            return feature_vectors.copy()
             
-            # Handle NaN and infinity values
-            if np.isnan(feature_vectors).any() or np.isinf(feature_vectors).any():
-                logger.warning("Input contains NaN/Inf values, applying automatic cleaning")
-                feature_vectors = np.nan_to_num(feature_vectors, nan=0.0, posinf=1.0, neginf=0.0)
+        try:
+            # Always use transform, never fit in production
+            scaled_features = self.scaler.transform(feature_vectors)
+            logger.debug(f"Applied pre-fitted scaler to feature vectors (transform only)")
+            return scaled_features
             
-            # CRITICAL: Never fit, only transform
-            try:
-                # Always use transform, never fit
-                if hasattr(self.scaler, 'transform') and callable(getattr(self.scaler, 'transform')):
-                    # Force transform without fitting
-                    if strategy == 'library_catalog' or isinstance(self.scaler, LibraryCatalogScaler):
-                        X_scaled = self.scaler.transform(feature_vectors)
-                    else:
-                        X_scaled = self.scaler.transform(feature_vectors)
-                    
-                    logger.debug(f"Applied pre-fitted {strategy} scaler to feature vectors (transform only)")
-                else:
-                    logger.error(f"Scaler missing transform method")
-                    # Fallback to original normalization
-                    return original_normalize(self, feature_vectors, fit=False)
-                
-                # Check for any NaN or inf values in result
-                if np.isnan(X_scaled).any() or np.isinf(X_scaled).any():
-                    logger.warning("Scaling produced invalid values, applying correction")
-                    X_scaled = np.nan_to_num(X_scaled, nan=0.5, posinf=1.0, neginf=0.0)
-                
-                # Ensure output is in expected range [0,1]
-                X_scaled = np.clip(X_scaled, 0.0, 1.0)
-                
-                # Ensure binary features preservation
-                if feature_names:
-                    for i, name in enumerate(feature_names):
-                        if i < feature_vectors.shape[1] and name in binary_features:
-                            # Get original values
-                            orig_values = feature_vectors[:, i]
-                            # Create exact binary values
-                            binary_values = np.zeros_like(orig_values)
-                            binary_values[orig_values >= 0.5] = 1.0
-                            
-                            # Update the normalized array with exact binary values
-                            X_scaled[:, i] = binary_values
-                            
-                            # Special diagnostic for test case
-                            test_entity_pair = getattr(self, '_current_entity_pair', None)
-                            if test_entity_pair and ("16044224#Agent700-36" in test_entity_pair and "7732682#Agent700-29" in test_entity_pair):
-                                logger.info(f"Critical test pair binary feature '{name}' preserved exactly: {binary_values[0]}")
-                
-                return X_scaled
-                
-            except Exception as e:
-                logger.error(f"Error in production scaling: {str(e)}")
-                
-                # Fall back to original normalization without fitting
-                try:
-                    return original_normalize(self, feature_vectors, fit=False)
-                except Exception as fallback_error:
-                    logger.error(f"Fallback scaling also failed: {fallback_error}")
-                    # Last resort: return input with simple clipping
-                    return np.clip(feature_vectors, 0.0, 1.0)
-        
-        # Bind enhanced method to feature engineering instance
-        self.feature_engineering.normalize_features = types.MethodType(
-            enhanced_normalize_production, self.feature_engineering
-        )
-        
-        # Set owner reference in feature engineering
-        self.feature_engineering._owner = self
-        
-        logger.info(f"Injected production normalization method with pre-fitted {strategy} scaler (no refitting)")
+        except Exception as e:
+            logger.error(f"Error in production scaling: {str(e)}")
+            return feature_vectors.copy()
     
     def _validate_binary_features(self, X_scaled, X_original, feature_names=None):
         """
-        Critical validation of binary features to ensure they are preserved during scaling.
-        This method ensures binary indicator features are consistently handled, which is
-        crucial for reliable entity matching.
+        Enhanced validation of binary features with production monitoring and alerting.
+        Ensures binary indicator features are preserved during scaling and provides
+        comprehensive monitoring for production environments.
         
         Args:
             X_scaled: Scaled feature vectors
             X_original: Original feature vectors
             feature_names: Optional feature names for detailed logging
+            
+        Returns:
+            Dictionary with validation results and monitoring metrics
         """
+        validation_results = {
+            'status': 'healthy',
+            'warnings': [],
+            'errors': [],
+            'corrections': [],
+            'binary_features_found': 0,
+            'corrupted_features': 0,
+            'timestamp': time.time()
+        }
+        
         if X_scaled.shape != X_original.shape:
-            logger.error(f"Cannot validate binary features: shape mismatch {X_scaled.shape} vs {X_original.shape}")
-            return
+            error_msg = f"Cannot validate binary features: shape mismatch {X_scaled.shape} vs {X_original.shape}"
+            logger.error(error_msg)
+            validation_results['status'] = 'error'
+            validation_results['errors'].append(error_msg)
+            return validation_results
         
         # Default feature names if not provided
         if feature_names is None:
@@ -604,33 +473,218 @@ class ScalingBridge:
                 binary_features.append(name)
                 binary_indices.append(i)
                 
+        validation_results['binary_features_found'] = len(binary_features)
+        
         if not binary_indices:
-            return  # No binary features to validate
+            logger.debug("No binary features found for validation")
+            return validation_results
             
-        # Check and fix each binary feature
-        fixed_count = 0
+        # Enhanced validation with comprehensive monitoring
+        total_fixed = 0
+        critical_issues = 0
+        
         for idx, name in zip(binary_indices, binary_features):
             orig_col = X_original[:, idx]
             scaled_col = X_scaled[:, idx]
             
+            # Analyze feature distribution for monitoring
+            unique_scaled = np.unique(scaled_col)
+            unique_orig = np.unique(orig_col)
+            
+            # Check if original values are properly binary
+            orig_is_binary = np.all(np.isin(unique_orig, [0.0, 1.0]))
+            scaled_is_binary = np.all(np.isin(unique_scaled, [0.0, 1.0]))
+            
+            if not orig_is_binary:
+                warning_msg = f"Original feature '{name}' contains non-binary values: {unique_orig}"
+                logger.warning(warning_msg)
+                validation_results['warnings'].append(warning_msg)
+            
             # Find values that should be binary but aren't exactly 0.0 or 1.0
-            # We check if the scaled values differ significantly from binary values
             should_be_zero = (orig_col < 0.5) & ((scaled_col != 0.0) & (scaled_col > 0.001))
             should_be_one = (orig_col >= 0.5) & ((scaled_col != 1.0) & (scaled_col < 0.999))
             
             problem_count = np.sum(should_be_zero) + np.sum(should_be_one)
+            
             if problem_count > 0:
-                logger.warning(f"BINARY VALIDATION: Fixed {problem_count} values in '{name}' that were not exactly binary")
+                validation_results['corrupted_features'] += 1
                 
-                # Force binary values
+                # Force binary values (correction)
                 X_scaled[should_be_zero, idx] = 0.0
                 X_scaled[should_be_one, idx] = 1.0
-                fixed_count += problem_count
+                total_fixed += problem_count
                 
-        if fixed_count > 0:
-            logger.info(f"BINARY VALIDATION: Fixed a total of {fixed_count} binary indicator values across {len(binary_features)} features")
+                correction_msg = f"Corrected {problem_count} non-binary values in '{name}'"
+                validation_results['corrections'].append(correction_msg)
+                logger.warning(f"BINARY VALIDATION: {correction_msg}")
+                
+                # Check for critical entity pairs (from specification)
+                if "indicator" in name.lower() and problem_count > 0:
+                    critical_issues += 1
+                    
+            # Final validation check
+            final_scaled = X_scaled[:, idx]
+            final_unique = np.unique(final_scaled)
+            if not np.all(np.isin(final_unique, [0.0, 1.0])):
+                error_msg = f"CRITICAL: Failed to fix binary feature '{name}' - still contains: {final_unique}"
+                logger.error(error_msg)
+                validation_results['errors'].append(error_msg)
+                validation_results['status'] = 'error'
+                
+        # Summary logging and monitoring alerts
+        if total_fixed > 0:
+            summary_msg = f"Fixed {total_fixed} binary values across {len(binary_features)} features"
+            logger.info(f"BINARY VALIDATION SUMMARY: {summary_msg}")
+            validation_results['corrections'].append(summary_msg)
+            
+        if critical_issues > 0:
+            critical_msg = f"CRITICAL: {critical_issues} indicator features had binary corruption"
+            logger.error(critical_msg)
+            validation_results['errors'].append(critical_msg)
+            validation_results['status'] = 'critical' if validation_results['status'] != 'error' else 'error'
+            
+        # Production monitoring thresholds
+        corruption_rate = validation_results['corrupted_features'] / max(1, validation_results['binary_features_found'])
+        if corruption_rate > 0.1:  # More than 10% corruption
+            warning_msg = f"High binary feature corruption rate: {corruption_rate:.2%}"
+            logger.warning(warning_msg)
+            validation_results['warnings'].append(warning_msg)
+            if validation_results['status'] == 'healthy':
+                validation_results['status'] = 'warning'
         
-        return X_scaled
+        # Log audit trail for production monitoring
+        if validation_results['corrections'] or validation_results['errors']:
+            audit_entry = {
+                'timestamp': validation_results['timestamp'],
+                'binary_features_checked': validation_results['binary_features_found'],
+                'corrupted_features': validation_results['corrupted_features'],
+                'corrections_made': len(validation_results['corrections']),
+                'status': validation_results['status']
+            }
+            logger.info(f"BINARY VALIDATION AUDIT: {audit_entry}")
+        
+        return validation_results
+    
+    def validate_scaling_health(self, X_current: np.ndarray, feature_names: Optional[List[str]] = None) -> Dict[str, Any]:
+        """
+        Production health check for scaling configuration and data integrity.
+        Implements monitoring thresholds from SCALING_DATA_VALIDATION.md.
+        
+        Args:
+            X_current: Current feature data to validate
+            feature_names: Names of features (optional)
+            
+        Returns:
+            Dictionary with health check results and monitoring metrics
+        """
+        health_report = {
+            'status': 'healthy',
+            'warnings': [],
+            'errors': [],
+            'metrics': {},
+            'timestamp': time.time()
+        }
+        
+        try:
+            # Ensure we have feature names
+            if feature_names is None:
+                if hasattr(self.feature_engineering, 'feature_registry'):
+                    feature_names = list(self.feature_engineering.feature_registry.keys())
+                else:
+                    feature_names = [f"feature_{i}" for i in range(X_current.shape[1])]
+            
+            # Check if we have a scaler for comparison
+            if not hasattr(self, 'scaler') or self.scaler is None:
+                warning_msg = "No scaler available for health check"
+                health_report['warnings'].append(warning_msg)
+                logger.warning(warning_msg)
+                health_report['status'] = 'warning'
+                return health_report
+            
+            # 1. Compression Factor Analysis
+            compression_metrics = {}
+            if hasattr(self.scaler, 'get_compression_metrics'):
+                try:
+                    scaler_metrics = self.scaler.get_compression_metrics()
+                    for group_name, group_metrics in scaler_metrics.items():
+                        for feature_name, metrics in group_metrics.items():
+                            compression_factor = metrics.get('compression_factor', 1.0)
+                            compression_metrics[feature_name] = compression_factor
+                            
+                            # Apply thresholds from SCALING_DATA_VALIDATION.md
+                            if compression_factor > 2.0:
+                                error_msg = f"Feature '{feature_name}': compression factor {compression_factor:.2f} > 2.0 (critical threshold)"
+                                health_report['errors'].append(error_msg)
+                                logger.error(error_msg)
+                            elif compression_factor > 1.5:
+                                warning_msg = f"Feature '{feature_name}': compression factor {compression_factor:.2f} > 1.5 (warning threshold)"
+                                health_report['warnings'].append(warning_msg)
+                                logger.warning(warning_msg)
+                                
+                except Exception as e:
+                    logger.warning(f"Could not get compression metrics: {e}")
+            
+            health_report['metrics']['compression_factors'] = compression_metrics
+            
+            # 2. Feature Range Drift Detection
+            range_drift_metrics = {}
+            for i, name in enumerate(feature_names):
+                if i < X_current.shape[1]:
+                    current_min = float(np.min(X_current[:, i]))
+                    current_max = float(np.max(X_current[:, i]))
+                    current_range = current_max - current_min
+                    
+                    range_drift_metrics[name] = {
+                        'min': current_min,
+                        'max': current_max,
+                        'range': current_range
+                    }
+                    
+                    # Check for extreme values (basic drift detection)
+                    if current_min < -0.1 or current_max > 1.1:
+                        warning_msg = f"Feature '{name}' outside expected range [0,1]: [{current_min:.3f}, {current_max:.3f}]"
+                        health_report['warnings'].append(warning_msg)
+                        logger.warning(warning_msg)
+            
+            health_report['metrics']['feature_ranges'] = range_drift_metrics
+            
+            # 3. Binary Feature Integrity Check
+            binary_validation = self._validate_binary_features(X_current, X_current, feature_names)
+            health_report['metrics']['binary_validation'] = binary_validation
+            
+            if binary_validation['status'] == 'error':
+                health_report['status'] = 'error'
+                health_report['errors'].extend(binary_validation['errors'])
+            elif binary_validation['status'] in ['critical', 'warning']:
+                if health_report['status'] == 'healthy':
+                    health_report['status'] = binary_validation['status']
+                health_report['warnings'].extend(binary_validation['warnings'])
+            
+            # 4. Overall Status Assessment
+            if health_report['errors']:
+                health_report['status'] = 'error'
+            elif health_report['warnings']:
+                if health_report['status'] == 'healthy':
+                    health_report['status'] = 'warning'
+            
+            # 5. Summary Metrics
+            health_report['metrics']['summary'] = {
+                'total_features': len(feature_names),
+                'binary_features_checked': binary_validation.get('binary_features_found', 0),
+                'compression_issues': sum(1 for cf in compression_metrics.values() if cf > 1.5),
+                'range_drift_issues': len([w for w in health_report['warnings'] if 'outside expected range' in w])
+            }
+            
+            logger.info(f"Scaling health check completed: {health_report['status']} - "
+                       f"{len(health_report['errors'])} errors, {len(health_report['warnings'])} warnings")
+            
+        except Exception as e:
+            error_msg = f"Health check failed: {str(e)}"
+            health_report['status'] = 'error'
+            health_report['errors'].append(error_msg)
+            logger.error(error_msg)
+        
+        return health_report
     
     def _generate_scaling_report(self) -> str:
         """

@@ -2,14 +2,14 @@
 
 ## Overview
 
-This entity resolution pipeline processes Yale University Library Catalog data (derived from MARC 21 records) to identify and resolve entity matches across catalog entries. The system combines vector embeddings, feature engineering, and machine learning to achieve **99.55% precision** and **82.48% recall** in production.
+This entity resolution pipeline processes Yale University Library Catalog data (derived from MARC 21 records) to identify and resolve entity matches across catalog entries. The system combines vector embeddings, feature engineering, and machine learning to achieve **99.75% precision** and **82.48% recall** in preproduction.
 
 ## Pipeline Architecture
 
 The system implements a **triple-layer approach**:
 
 1. **Main Pipeline**: Entity resolution using logistic regression with engineered features
-2. **Auxiliary Classification**: Individual record taxonomy classification using parallel API processing and SetFit models
+2. **Auxiliary Classification**: Individual record taxonomy classification using parallel API processing and SetFit or Mistral.AI models
 3. **Subject Enhancement**: Automated quality audit and imputation for subject fields using vector similarity
 
 ### Core Pipeline Stages
@@ -237,11 +237,10 @@ left,right,match
 ## Performance Characteristics
 
 ### Latest Results (Test Set: 14,930 pairs)
-- **Precision**: 99.55% (9,955 TP, 45 FP)
-- **Recall**: 82.48% (2,114 FN, 9,955 TP)
-- **F1-Score**: 90.22%
-- **Specificity**: 98.43%
-- **Accuracy**: 85.54%
+- **Precision**: 99.75% (9,935 TP, 25 FP)
+- **Recall**: 82.48% (2,111 FN, 9,935 TP)
+- **F1-Score**: 90.29%
+- **Accuracy**: 85.69%
 
 ### Computational Efficiency
 - **ANN Reduction**: 99.23% reduction in pairwise comparisons via vector similarity

@@ -1925,17 +1925,213 @@ class FeatureEngineering:
     
     def normalize_features(self, features: np.ndarray, fit: bool = False) -> np.ndarray:
         """
-        DISABLED: Now returns raw features with no normalization.
+        Re-enabled normalization with LibraryCatalogScaler integration.
+        
+        Uses domain-specific scaling strategies for library catalog entity resolution,
+        with feature group-based scaling and binary feature preservation.
         
         Args:
             features: Feature array to normalize
-            fit: Whether to fit the scaler on this data (ignored)
+            fit: Whether to fit the scaler on this data
             
         Returns:
-            Raw feature array without any normalization
+            Normalized feature array using LibraryCatalogScaler
         """
-        logger.warning("*** NORMALIZATION COMPLETELY DISABLED - returning raw features directly ***")
-        return features.copy()  # Return a copy to avoid modifying the original array
+        # Early exit for empty input
+        if features.size == 0:
+            logger.warning("Empty feature array provided to normalize_features")
+            return features.copy()
+            
+        # Lazy initialization of scaling bridge
+        if not hasattr(self, '_scaling_bridge'):
+            try:
+                from src.scaling_bridge import ScalingBridge
+                # Use scaling_config.yml as the default configuration file
+                config_path = "scaling_config.yml"
+                self._scaling_bridge = ScalingBridge(config_path)
+                self._scaling_bridge.connect(self)
+                
+                # Try to load a checkpoint in production mode (when fit=False)
+                if not fit and self.has_scaler_checkpoint():
+                    if self.load_scaler_checkpoint():
+                        logger.info("Loaded fitted scaler checkpoint for production consistency")
+                    else:
+                        logger.warning("Failed to load scaler checkpoint, will fit new scaler")
+                        
+                logger.info("Initialized ScalingBridge with LibraryCatalogScaler")
+            except Exception as e:
+                logger.error(f"Failed to initialize ScalingBridge: {e}")
+                # Fallback to returning raw features if initialization fails
+                logger.warning("Falling back to raw features due to ScalingBridge initialization failure")
+                return features.copy()
+        
+        # Ensure we have valid feature names
+        if not hasattr(self, 'feature_names') or not self.feature_names:
+            self.feature_names = list(self.feature_registry.keys()) if hasattr(self, 'feature_registry') else []
+            
+        if not self.feature_names:
+            logger.warning("No feature names available for scaling, returning raw features")
+            return features.copy()
+            
+        try:
+            # Validate input dimensions
+            if len(features.shape) != 2:
+                logger.error(f"Expected 2D feature array, got {len(features.shape)}D")
+                return features.copy()
+                
+            if features.shape[1] != len(self.feature_names):
+                logger.warning(f"Feature count mismatch: array has {features.shape[1]} columns, "
+                              f"expected {len(self.feature_names)} features")
+                # Adjust feature names if necessary
+                if features.shape[1] < len(self.feature_names):
+                    self.feature_names = self.feature_names[:features.shape[1]]
+                else:
+                    # Pad with generic names if we have more columns than names
+                    additional_names = [f"feature_{i}" for i in range(len(self.feature_names), features.shape[1])]
+                    self.feature_names.extend(additional_names)
+            
+            # Initialize or get the LibraryCatalogScaler
+            if not hasattr(self._scaling_bridge, 'scaler') or self._scaling_bridge.scaler is None:
+                from src.robust_scaler import LibraryCatalogScaler
+                self._scaling_bridge.scaler = LibraryCatalogScaler(self.config)
+                logger.debug("Initialized LibraryCatalogScaler")
+            
+            # Apply scaling based on fit parameter
+            if fit:
+                # Fit and transform
+                scaled_features = self._scaling_bridge.scaler.fit_transform(features, self.feature_names)
+                logger.debug(f"Fitted and transformed {features.shape[0]} samples with {features.shape[1]} features")
+                
+                # Save checkpoint after successful fitting for training/production consistency
+                checkpoint_path = self.save_scaler_checkpoint()
+                if checkpoint_path:
+                    logger.info(f"Saved scaler checkpoint for training/production consistency: {checkpoint_path}")
+                    
+            else:
+                # Transform only (production mode)
+                if hasattr(self._scaling_bridge.scaler, 'scalers') and self._scaling_bridge.scaler.scalers:
+                    scaled_features = self._scaling_bridge.scaler.transform(features)
+                    logger.debug(f"Transformed {features.shape[0]} samples with {features.shape[1]} features")
+                else:
+                    # Scaler not fitted yet, need to fit first
+                    logger.info("Scaler not fitted yet, performing fit_transform")
+                    scaled_features = self._scaling_bridge.scaler.fit_transform(features, self.feature_names)
+                    
+                    # Save checkpoint after successful fitting
+                    checkpoint_path = self.save_scaler_checkpoint()
+                    if checkpoint_path:
+                        logger.info(f"Saved scaler checkpoint after fit_transform: {checkpoint_path}")
+            
+            # Validate output
+            if scaled_features.shape != features.shape:
+                logger.error(f"Output shape mismatch: expected {features.shape}, got {scaled_features.shape}")
+                return features.copy()
+                
+            # Additional validation for NaN/inf values
+            if np.isnan(scaled_features).any() or np.isinf(scaled_features).any():
+                logger.warning("Scaled features contain NaN or infinite values, applying correction")
+                scaled_features = np.nan_to_num(scaled_features, nan=0.5, posinf=1.0, neginf=0.0)
+            
+            # Ensure values are in expected range [0,1] for most features
+            scaled_features = np.clip(scaled_features, 0.0, 1.0)
+            
+            logger.debug(f"Successfully normalized features using LibraryCatalogScaler")
+            return scaled_features
+            
+        except Exception as e:
+            logger.error(f"Error in feature normalization: {str(e)}")
+            logger.warning("Falling back to raw features due to normalization error")
+            return features.copy()
+    
+    def save_scaler_checkpoint(self, scaler_name: str = "fitted_scaler") -> Optional[str]:
+        """
+        Save the current fitted scaler to checkpoint for training/production consistency.
+        
+        Args:
+            scaler_name: Name for the scaler checkpoint
+            
+        Returns:
+            Path where scaler was saved, or None if failed
+        """
+        try:
+            # Ensure we have a fitted scaler
+            if not hasattr(self, '_scaling_bridge') or not hasattr(self._scaling_bridge, 'scaler'):
+                logger.warning("No fitted scaler available to save")
+                return None
+                
+            if not hasattr(self._scaling_bridge.scaler, 'scalers') or not self._scaling_bridge.scaler.scalers:
+                logger.warning("Scaler is not fitted, cannot save checkpoint")
+                return None
+            
+            # Get checkpoint manager
+            from src.checkpoint_manager import get_checkpoint_manager
+            checkpoint_manager = get_checkpoint_manager(self.config)
+            
+            # Save scaler using checkpoint manager
+            saved_path = checkpoint_manager.save_scaler(self._scaling_bridge.scaler, scaler_name)
+            logger.info(f"Saved scaler checkpoint for training/production consistency: {saved_path}")
+            return saved_path
+            
+        except Exception as e:
+            logger.error(f"Failed to save scaler checkpoint: {str(e)}")
+            return None
+    
+    def load_scaler_checkpoint(self, scaler_name: str = "fitted_scaler") -> bool:
+        """
+        Load a fitted scaler from checkpoint for production use.
+        
+        Args:
+            scaler_name: Name of the scaler checkpoint to load
+            
+        Returns:
+            True if scaler was successfully loaded
+        """
+        try:
+            # Get checkpoint manager
+            from src.checkpoint_manager import get_checkpoint_manager
+            checkpoint_manager = get_checkpoint_manager(self.config)
+            
+            # Check if checkpoint exists
+            if not checkpoint_manager.has_scaler_checkpoint(scaler_name):
+                logger.warning(f"No scaler checkpoint found: {scaler_name}")
+                return False
+            
+            # Load the scaler
+            scaler = checkpoint_manager.load_scaler(self.config, scaler_name)
+            
+            # Initialize scaling bridge if needed
+            if not hasattr(self, '_scaling_bridge'):
+                from src.scaling_bridge import ScalingBridge
+                config_path = "scaling_config.yml"
+                self._scaling_bridge = ScalingBridge(config_path)
+                self._scaling_bridge.connect(self)
+            
+            # Set the loaded scaler
+            self._scaling_bridge.scaler = scaler
+            
+            logger.info(f"Loaded fitted scaler from checkpoint: {scaler_name}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to load scaler checkpoint: {str(e)}")
+            return False
+    
+    def has_scaler_checkpoint(self, scaler_name: str = "fitted_scaler") -> bool:
+        """
+        Check if a scaler checkpoint exists.
+        
+        Args:
+            scaler_name: Name of the scaler checkpoint
+            
+        Returns:
+            True if checkpoint exists
+        """
+        try:
+            from src.checkpoint_manager import get_checkpoint_manager
+            checkpoint_manager = get_checkpoint_manager(self.config)
+            return checkpoint_manager.has_scaler_checkpoint(scaler_name)
+        except Exception:
+            return False
     
     def get_feature_names(self) -> List[str]:
         """

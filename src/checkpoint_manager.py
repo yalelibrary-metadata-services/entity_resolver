@@ -182,6 +182,109 @@ class PipelineStateTracker:
             'completed_stages': list(self.state.get('stage_timestamps', {}).keys()),
             'stage_metrics': self.state.get('stage_metrics', {})
         }
+    
+    def save_scaler(self, scaler, scaler_name: str = "fitted_scaler") -> str:
+        """
+        Save a fitted scaler to checkpoint directory.
+        
+        Args:
+            scaler: Fitted scaler instance (LibraryCatalogScaler)
+            scaler_name: Name for the scaler checkpoint file
+            
+        Returns:
+            Path where scaler was saved
+        """
+        try:
+            from src.robust_scaler import serialize_scaler
+            
+            scaler_path = os.path.join(self.checkpoint_dir, f"{scaler_name}.json")
+            saved_path = serialize_scaler(scaler, scaler_path)
+            
+            # Update state to track scaler checkpoint
+            if 'scaler_checkpoints' not in self.state:
+                self.state['scaler_checkpoints'] = {}
+            
+            self.state['scaler_checkpoints'][scaler_name] = {
+                'path': saved_path,
+                'timestamp': time.time(),
+                'version': getattr(scaler, 'version', '1.0')
+            }
+            self._save_state()
+            
+            logger.info(f"Saved scaler checkpoint: {saved_path}")
+            return saved_path
+            
+        except Exception as e:
+            logger.error(f"Failed to save scaler checkpoint: {str(e)}")
+            raise
+    
+    def load_scaler(self, config: Dict[str, Any], scaler_name: str = "fitted_scaler"):
+        """
+        Load a fitted scaler from checkpoint directory.
+        
+        Args:
+            config: Configuration dictionary for scaler initialization
+            scaler_name: Name of the scaler checkpoint file
+            
+        Returns:
+            Loaded fitted scaler instance
+        """
+        try:
+            from src.robust_scaler import deserialize_scaler
+            
+            # Check if we have a record of this scaler
+            scaler_checkpoints = self.state.get('scaler_checkpoints', {})
+            if scaler_name not in scaler_checkpoints:
+                # Fallback to looking for the file directly
+                scaler_path = os.path.join(self.checkpoint_dir, f"{scaler_name}.json")
+            else:
+                scaler_path = scaler_checkpoints[scaler_name]['path']
+            
+            if not os.path.exists(scaler_path):
+                raise FileNotFoundError(f"Scaler checkpoint not found: {scaler_path}")
+            
+            scaler = deserialize_scaler(scaler_path, config)
+            logger.info(f"Loaded scaler checkpoint: {scaler_path}")
+            return scaler
+            
+        except Exception as e:
+            logger.error(f"Failed to load scaler checkpoint: {str(e)}")
+            raise
+    
+    def has_scaler_checkpoint(self, scaler_name: str = "fitted_scaler") -> bool:
+        """
+        Check if a scaler checkpoint exists.
+        
+        Args:
+            scaler_name: Name of the scaler checkpoint file
+            
+        Returns:
+            True if checkpoint exists and is valid
+        """
+        try:
+            scaler_checkpoints = self.state.get('scaler_checkpoints', {})
+            if scaler_name in scaler_checkpoints:
+                scaler_path = scaler_checkpoints[scaler_name]['path']
+                return os.path.exists(scaler_path)
+            else:
+                # Fallback to direct file check
+                scaler_path = os.path.join(self.checkpoint_dir, f"{scaler_name}.json")
+                return os.path.exists(scaler_path)
+        except Exception:
+            return False
+    
+    def get_scaler_info(self, scaler_name: str = "fitted_scaler") -> Optional[Dict[str, Any]]:
+        """
+        Get information about a saved scaler checkpoint.
+        
+        Args:
+            scaler_name: Name of the scaler checkpoint file
+            
+        Returns:
+            Dictionary with scaler checkpoint info or None if not found
+        """
+        scaler_checkpoints = self.state.get('scaler_checkpoints', {})
+        return scaler_checkpoints.get(scaler_name)
 
 def get_checkpoint_manager(config: Dict[str, Any]) -> PipelineStateTracker:
     """

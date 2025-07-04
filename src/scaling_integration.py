@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 import warnings
 
 # Import custom components
-from src.robust_scaler import RobustMinMaxScaler, LibraryCatalogScaler, ScalingEvaluator
+from src.robust_scaler import RobustMinMaxScaler, LibraryCatalogScaler
 from src.scaling_visualizer import ScalingVisualizer
 
 logger = logging.getLogger(__name__)
@@ -1205,3 +1205,211 @@ enhanced_feature_engineering = scaling.integrate_with_feature_engineering(featur
             logger.error(f"Error integrating with classification pipeline: {e}")
         
         return pipeline
+
+
+class ScalingEvaluator:
+    """
+    Evaluates the effectiveness of scaling strategies for entity resolution.
+    
+    Provides metrics and visualizations to analyze how scaling affects
+    feature distributions and classification performance.
+    """
+    
+    def __init__(self, config):
+        """
+        Initialize with configuration.
+        
+        Args:
+            config: Configuration dictionary
+        """
+        self.config = config
+    
+    def evaluate_scaling(self, X_original, X_scaled, feature_names, y_true=None):
+        """
+        Evaluate effectiveness of scaling strategy.
+        
+        Args:
+            X_original: Original feature values
+            X_scaled: Scaled feature values
+            feature_names: Names of features
+            y_true: True match labels if available
+            
+        Returns:
+            Dictionary of evaluation metrics
+        """
+        metrics = {}
+        
+        # Calculate basic distribution statistics
+        metrics["distribution"] = self._analyze_distributions(X_original, X_scaled, feature_names)
+        
+        # Calculate feature separation power (if labels available)
+        if y_true is not None:
+            metrics["separation"] = self._analyze_feature_separation(X_scaled, feature_names, y_true)
+            
+        # Analyze correlation between features
+        metrics["correlation"] = self._analyze_feature_correlation(X_scaled, feature_names)
+        
+        # Calculate information retention
+        metrics["info_retention"] = self._analyze_information_retention(X_original, X_scaled, feature_names)
+        
+        return metrics
+    
+    def _analyze_distributions(self, X_original, X_scaled, feature_names):
+        """
+        Analyze distribution changes from scaling.
+        
+        Args:
+            X_original: Original feature values
+            X_scaled: Scaled feature values
+            feature_names: Names of features
+            
+        Returns:
+            Dictionary of distribution metrics
+        """
+        from scipy.stats import skew, kurtosis
+        
+        distribution_metrics = {}
+        
+        for i, name in enumerate(feature_names):
+            orig_vals = X_original[:, i]
+            scaled_vals = X_scaled[:, i]
+            
+            # Calculate distribution statistics
+            distribution_metrics[name] = {
+                "original": {
+                    "min": float(np.min(orig_vals)),
+                    "max": float(np.max(orig_vals)),
+                    "mean": float(np.mean(orig_vals)),
+                    "median": float(np.median(orig_vals)),
+                    "std": float(np.std(orig_vals)),
+                    "skew": float(skew(orig_vals)),
+                    "kurtosis": float(kurtosis(orig_vals))
+                },
+                "scaled": {
+                    "min": float(np.min(scaled_vals)),
+                    "max": float(np.max(scaled_vals)),
+                    "mean": float(np.mean(scaled_vals)),
+                    "median": float(np.median(scaled_vals)),
+                    "std": float(np.std(scaled_vals)),
+                    "skew": float(skew(scaled_vals)),
+                    "kurtosis": float(kurtosis(scaled_vals))
+                }
+            }
+            
+        return distribution_metrics
+    
+    def _analyze_feature_separation(self, X_scaled, feature_names, y_true):
+        """
+        Analyze how well scaled features separate matches from non-matches.
+        
+        Args:
+            X_scaled: Scaled feature values
+            feature_names: Names of features
+            y_true: True match labels
+            
+        Returns:
+            Dictionary of separation metrics
+        """
+        from sklearn.metrics import roc_auc_score
+        
+        separation_metrics = {}
+        
+        # Split data by match status
+        X_match = X_scaled[y_true == 1]
+        X_non_match = X_scaled[y_true == 0]
+        
+        for i, name in enumerate(feature_names):
+            match_vals = X_match[:, i] if X_match.size > 0 else np.array([])
+            non_match_vals = X_non_match[:, i] if X_non_match.size > 0 else np.array([])
+            
+            # Skip if either class has no samples
+            if len(match_vals) == 0 or len(non_match_vals) == 0:
+                separation_metrics[name] = {
+                    "error": "Insufficient samples for separation analysis"
+                }
+                continue
+            
+            # Calculate separation metrics
+            try:
+                # Calculate AUC for this feature
+                auc = float(roc_auc_score(y_true, X_scaled[:, i]))
+            except:
+                auc = 0.5  # Default if calculation fails
+            
+            # Calculate effect size (Cohen's d)
+            pooled_std = np.sqrt((np.var(match_vals) + np.var(non_match_vals)) / 2)
+            effect_size = float((np.mean(match_vals) - np.mean(non_match_vals)) / pooled_std) if pooled_std > 0 else 0.0
+            
+            separation_metrics[name] = {
+                "match_mean": float(np.mean(match_vals)),
+                "non_match_mean": float(np.mean(non_match_vals)),
+                "mean_difference": float(np.mean(match_vals) - np.mean(non_match_vals)),
+                "effect_size": effect_size,
+                "auc": auc
+            }
+            
+        return separation_metrics
+    
+    def _analyze_feature_correlation(self, X_scaled, feature_names):
+        """
+        Analyze correlation between scaled features.
+        
+        Args:
+            X_scaled: Scaled feature values
+            feature_names: Names of features
+            
+        Returns:
+            Dictionary with correlation matrix
+        """
+        # Calculate correlation matrix
+        corr_matrix = np.corrcoef(X_scaled, rowvar=False)
+        
+        # Convert to dictionary format
+        correlation = {
+            "matrix": corr_matrix.tolist(),
+            "feature_names": feature_names
+        }
+        
+        return correlation
+    
+    def _analyze_information_retention(self, X_original, X_scaled, feature_names):
+        """
+        Analyze information retention after scaling.
+        
+        Args:
+            X_original: Original feature values
+            X_scaled: Scaled feature values
+            feature_names: Names of features
+            
+        Returns:
+            Dictionary of information retention metrics
+        """
+        retention_metrics = {}
+        
+        for i, name in enumerate(feature_names):
+            orig_vals = X_original[:, i]
+            scaled_vals = X_scaled[:, i]
+            
+            # Calculate rank correlation (Spearman's rho)
+            # This measures how well the ordering of values is preserved
+            from scipy.stats import spearmanr
+            try:
+                rho, p_value = spearmanr(orig_vals, scaled_vals)
+            except:
+                rho, p_value = 0.0, 1.0
+            
+            # Calculate mutual information
+            # This measures how much information is shared between variables
+            from sklearn.feature_selection import mutual_info_regression
+            try:
+                mi = mutual_info_regression(orig_vals.reshape(-1, 1), scaled_vals)[0]
+            except:
+                mi = 0.0
+            
+            retention_metrics[name] = {
+                "rank_correlation": float(rho),
+                "rank_correlation_p_value": float(p_value),
+                "mutual_information": float(mi)
+            }
+            
+        return retention_metrics
