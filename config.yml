@@ -84,18 +84,19 @@ tpd_poll_interval: 300                # OPTIMIZED: 5min polling for faster recov
 tpd_resume_threshold: 50000000        # OPTIMIZED: Resume when 50M tokens available
 
 # Batch Processing Configuration
-use_batch_embeddings: false  # Set to true to use OpenAI Batch API (50% cost savings, 24h turnaround)
+use_batch_embeddings: true   # Set to true to use OpenAI Batch API (50% cost savings, 24h turnaround)
 batch_embedding_size: 50000  # Number of requests per batch file (max 50,000)
 max_requests_per_file: 50000  # Maximum requests per JSONL file
-batch_manual_polling: true  # Set to true for manual polling, false for automatic polling
-batch_poll_interval: 300  # Seconds between status polls when auto-polling (5 minutes)
-batch_max_wait_time: 86400  # Maximum wait time for batch completion (24 hours)
+batch_manual_polling: true   # Set to true for manual polling, false for automatic polling
+batch_poll_interval: 300     # Seconds between status polls when auto-polling (5 minutes)
+batch_max_wait_time: 86400   # Maximum wait time for batch completion (24 hours)
 
-# Automated Queue Management Configuration - CORRECTED (2025-07-02)
+# Automated Queue Management Configuration - FIXED (2025-07-04)
 use_automated_queue: true           # Enable automated 16-batch queue system
 max_active_batches: 16              # Maximum concurrent batches (default: 16)  
 queue_poll_interval: 1800           # 30 minutes between status checks (default: 1800)
-request_quota_limit: 800000         # CORRECTED: 800K IS the conservative limit - maintain exactly this!
+request_quota_limit: 816000         # FIXED: Set to 102% of 800K (816K) as safety buffer
+request_quota_target: 800000        # ADDED: Actual target of exactly 800K requests
 
 # Error Handling Configuration
 error_handling:

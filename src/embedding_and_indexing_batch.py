@@ -103,8 +103,9 @@ class BatchEmbeddingPipeline:
         self.max_concurrent_jobs = config.get("max_concurrent_jobs", 50)  # Limit concurrent jobs
         
         # Request quota management (1M enqueued requests limit)
-        # CORRECTED: 800K IS the conservative limit - maintain exactly 800K!
-        self.request_quota_limit = config.get("request_quota_limit", 800_000)  # 800K requests (already conservative)
+        # CORRECTED: Set to 102% of 800K to ensure we ALWAYS hit exactly 800K!
+        self.request_quota_target = 800_000  # Target exactly 800K requests
+        self.request_quota_limit = config.get("request_quota_limit", 816_000)  # 102% of 800K for safety buffer
         self.max_requests_per_job = config.get("max_requests_per_job", 50_000)  # 50K requests per job
         
         # Automated queue management - maintain 16 active batches with auto-submission
@@ -1566,10 +1567,10 @@ class BatchEmbeddingPipeline:
                 logger.debug(f"🔍 Checking quota before submission attempt {attempt + 1}")
                 current_usage = self._get_current_usage()
                 
-                # OPTIMIZED: More aggressive quota usage to maintain 800K requests
-                quota_usage_pct = current_usage['total_active_requests'] / self.request_quota_limit
-                if quota_usage_pct > 0.98:  # INCREASED: Stop at 98% usage (was 95%)
-                    logger.warning(f"🛑 Quota usage at {quota_usage_pct*100:.1f}% - attempting cleanup and recovery")
+                # CORRECTED: Stop when we hit exactly 800K requests (the actual target)
+                current_requests = current_usage['total_active_requests']
+                if current_requests >= self.request_quota_target:  # Stop at exactly 800K
+                    logger.warning(f"🛑 Quota usage at {current_requests:,} requests (target: {self.request_quota_target:,}) - attempting cleanup and recovery")
                     
                     # Try to clean up failed jobs first
                     cleaned_up = self._cleanup_failed_quota_jobs()
@@ -1577,14 +1578,14 @@ class BatchEmbeddingPipeline:
                         logger.info(f"✅ Cleaned up {cleaned_up} failed jobs - rechecking quota")
                         # Recheck quota after cleanup
                         updated_usage = self._get_current_usage()
-                        updated_quota_pct = updated_usage['total_active_requests'] / self.request_quota_limit
-                        if updated_quota_pct <= 0.98:  # Allow up to 98% after cleanup
-                            logger.info(f"🎉 Quota recovered to {updated_quota_pct*100:.1f}% after cleanup - continuing")
+                        updated_requests = updated_usage['total_active_requests']
+                        if updated_requests < self.request_quota_target:  # Below 800K after cleanup
+                            logger.info(f"🎉 Quota recovered to {updated_requests:,} requests after cleanup - continuing")
                         else:
-                            logger.warning(f"🚨 Still at {updated_quota_pct*100:.1f}% quota after cleanup - stopping submissions")
+                            logger.warning(f"🚨 Still at {updated_requests:,} requests after cleanup - stopping submissions")
                             break
                     else:
-                        logger.warning(f"🚨 No failed jobs to clean up - quota genuinely full at {quota_usage_pct*100:.1f}%")
+                        logger.warning(f"🚨 No failed jobs to clean up - quota genuinely full at {current_requests:,} requests")
                         break
                     
             except Exception as quota_check_error:
@@ -1605,15 +1606,15 @@ class BatchEmbeddingPipeline:
                 try:
                     time.sleep(2)  # Brief delay to allow OpenAI to update quota
                     post_submission_usage = self._get_current_usage()
-                    post_quota_pct = post_submission_usage['total_active_requests'] / self.request_quota_limit
+                    post_requests = post_submission_usage['total_active_requests']
                     
-                    logger.info(f"📊 Post-submission quota: {post_submission_usage['total_active_requests']:,}/{self.request_quota_limit:,} "
-                               f"({post_quota_pct*100:.1f}%) - {post_submission_usage['active_jobs']} active jobs")
+                    logger.info(f"📊 Post-submission quota: {post_requests:,}/{self.request_quota_target:,} "
+                               f"(target: 800K) - {post_submission_usage['active_jobs']} active jobs")
                     
-                    # OPTIMIZED: Stop closer to actual quota limit
-                    if post_quota_pct > 0.96:  # INCREASED: Stop at 96% after submission (was 90%)
-                        logger.warning(f"🚨 Quota usage now at {post_quota_pct*100:.1f}% after submission - "
-                                     f"stopping further submissions to prevent quota exceeded")
+                    # CORRECTED: Stop when we reach exactly 800K requests
+                    if post_requests >= self.request_quota_target:  # Stop at exactly 800K
+                        logger.warning(f"🚨 Quota usage now at {post_requests:,} requests after submission - "
+                                     f"reached target of {self.request_quota_target:,}, stopping further submissions")
                         break
                         
                 except Exception as post_check_error:
@@ -1836,9 +1837,9 @@ class BatchEmbeddingPipeline:
                             logger.info(f"⏸️  Queue full ({self.max_active_batches}/{self.max_active_batches}) - waiting for completion")
                         
                         # Warn if quota is getting high and handle quota recovery
-                        quota_usage_pct = current_usage['total_active_requests'] / self.request_quota_limit
-                        if quota_usage_pct > 0.98:  # OPTIMIZED: Match main submission threshold
-                            logger.warning(f"🚨 Critical quota usage: {quota_usage_pct*100:.1f}% - attempting recovery")
+                        current_requests = current_usage['total_active_requests']
+                        if current_requests >= self.request_quota_target:  # At or above 800K
+                            logger.warning(f"🚨 Critical quota usage: {current_requests:,} requests (target: 800K) - attempting recovery")
                             
                             # Try proactive cleanup
                             cleaned_up = self._cleanup_failed_quota_jobs()
@@ -1847,10 +1848,10 @@ class BatchEmbeddingPipeline:
                                 # Force recheck on next cycle
                                 last_status_time = 0  # Trigger immediate status update
                                 
-                        elif quota_usage_pct > 0.94:  # OPTIMIZED: Higher threshold for warnings
-                            logger.warning(f"⚠️  High quota usage: {quota_usage_pct*100:.1f}% of request limit consumed")
-                        elif quota_usage_pct > 0.8:
-                            logger.info(f"📈 Moderate quota usage: {quota_usage_pct*100:.1f}% of request limit consumed")
+                        elif current_requests > 750_000:  # Above 750K but below 800K
+                            logger.warning(f"⚠️  High quota usage: {current_requests:,} requests approaching target of 800K")
+                        elif current_requests > 640_000:  # Above 640K (80% of 800K)
+                            logger.info(f"📈 Moderate quota usage: {current_requests:,} requests (target: 800K)")
                             
                     except Exception as status_error:
                         # Fallback to basic status if quota check fails
@@ -2297,23 +2298,23 @@ class BatchEmbeddingPipeline:
                 
                 # Check current quota usage
                 current_usage = self._get_current_usage()
-                quota_pct = current_usage['total_active_requests'] / self.request_quota_limit
+                current_requests = current_usage['total_active_requests']
                 
-                logger.info(f"📊 Quota check (poll {poll_attempt + 1}): {current_usage['total_active_requests']:,}/{self.request_quota_limit:,} "
-                           f"({quota_pct*100:.1f}%) - {current_usage['active_jobs']} active jobs")
+                logger.info(f"📊 Quota check (poll {poll_attempt + 1}): {current_requests:,}/{self.request_quota_target:,} "
+                           f"(target: 800K) - {current_usage['active_jobs']} active jobs")
                 
-                # Check if we have enough quota to submit new batches (use 80% threshold)
-                if quota_pct <= 0.80:
-                    logger.info(f"🎉 Quota recovered to {quota_pct*100:.1f}% - ready to resume submissions!")
+                # Check if we're below the 800K target to submit new batches
+                if current_requests < self.request_quota_target:
+                    logger.info(f"🎉 Quota recovered to {current_requests:,} requests - ready to resume submissions!")
                     return True
                 
                 # If this is the last attempt, don't wait
                 if poll_attempt + 1 >= max_polls:
-                    logger.warning(f"⏰ Reached maximum polling time ({max_wait_hours} hours) - quota still at {quota_pct*100:.1f}%")
+                    logger.warning(f"⏰ Reached maximum polling time ({max_wait_hours} hours) - quota still at {current_requests:,} requests")
                     break
                 
                 # Wait for next poll
-                logger.info(f"⏳ Quota still at {quota_pct*100:.1f}% - waiting {poll_interval_minutes} minutes for next check...")
+                logger.info(f"⏳ Quota still at {current_requests:,} requests - waiting {poll_interval_minutes} minutes for next check...")
                 
                 # Save checkpoint before long wait
                 try:
@@ -2580,15 +2581,13 @@ class BatchEmbeddingPipeline:
         total_estimated_tokens = usage['estimated_active_tokens'] + estimated_new_tokens
         total_estimated_requests = usage['total_active_requests'] + new_request_count
         
-        # OPTIMIZED: Reduced safety margins for more aggressive quota usage
-        # Use smaller safety margins to maintain closer to 800K requests
-        optimized_safety_margin = 0.02  # 2% safety margin instead of 10%
+        # CORRECTED: No safety margins - aim for exactly 800K requests
+        # Use the full token limit with minimal safety margin
+        optimized_safety_margin = 0.01  # Just 1% safety margin for tokens
         safe_token_limit = int(self.token_quota_limit * (1 - optimized_safety_margin))
-        safe_request_limit = int(self.request_quota_limit * (1 - optimized_safety_margin))
         
-        # OPTIMIZED: Reduced conservative buffer for 800K target
-        conservative_buffer = 10_000  # REDUCED: 10K buffer instead of 50K
-        safe_request_limit = min(safe_request_limit, self.request_quota_limit - conservative_buffer)
+        # CORRECTED: Use exactly 800K as the target, no buffers or reductions
+        safe_request_limit = self.request_quota_target  # Exactly 800K requests
         
         # Check if we're within all limits - use strict comparison (< instead of <=)
         within_token_quota = total_estimated_tokens < safe_token_limit

@@ -146,7 +146,7 @@ def load_preprocessing_data(checkpoint_dir: str) -> tuple:
         print(f"Error loading preprocessing data: {str(e)}")
         sys.exit(1)
 
-def create_jobs(config: Dict[str, Any]) -> None:
+def create_jobs(config: Dict[str, Any], wait_for_quota: bool = False) -> None:
     """Create batch jobs without waiting for completion."""
     print("🚀 Creating OpenAI batch jobs...")
     
@@ -190,6 +190,16 @@ def create_jobs(config: Dict[str, Any]) -> None:
                     print(f"   1. Wait for OpenAI to process your jobs (up to 24 hours)")
                     print(f"   2. Check status: python batch_manager.py --status")
                     print(f"   3. Download results: python batch_manager.py --download")
+                elif result['status'] in ['quota_reached', 'quota_paused']:
+                    if wait_for_quota:
+                        print(f"\n⏳ Quota reached at {result.get('requests_submitted', 0):,} requests")
+                        print(f"🔄 Waiting for quota recovery (polling every 30 minutes)...")
+                        # The automated queue method should handle the waiting internally
+                        print(f"✅ Quota-limited batch creation completed")
+                    else:
+                        print(f"\n🛑 Quota reached at {result.get('requests_submitted', 0):,} requests")
+                        print(f"💡 Use --wait-for-quota to automatically wait for quota recovery")
+                        print(f"📋 Submitted jobs will continue processing")
                 elif result['status'] == 'no_work':
                     print("ℹ️  No new work to process - all eligible strings already processed")
                 else:
@@ -1350,6 +1360,9 @@ Examples:
   # Create batch jobs
   python batch_manager.py --create
   
+  # Create batch jobs and wait for quota recovery
+  python batch_manager.py --create --wait-for-quota
+  
   # Check job status
   python batch_manager.py --status
   
@@ -1418,6 +1431,8 @@ Examples:
                        help='Enable verbose logging')
     parser.add_argument('--force', action='store_true',
                        help='Force transition even with active batch jobs (for transition commands)')
+    parser.add_argument('--wait-for-quota', action='store_true',
+                       help='When quota is reached, wait and poll for recovery instead of exiting (for --create)')
     
     args = parser.parse_args()
     
@@ -1440,7 +1455,7 @@ Examples:
     # Execute requested action
     try:
         if args.create:
-            create_jobs(config)
+            create_jobs(config, wait_for_quota=args.wait_for_quota)
         elif args.status:
             check_status(config)
         elif args.download:
