@@ -181,15 +181,36 @@ class TransitionController:
         }
         
         try:
-            # Initialize real-time pipeline if needed
+            # Initialize real-time pipeline if needed with error handling for Weaviate
             if not self.realtime_pipeline:
-                self.realtime_pipeline = EmbeddingAndIndexingPipeline(self.config)
+                try:
+                    self.realtime_pipeline = EmbeddingAndIndexingPipeline(self.config)
+                except Exception as e:
+                    if "Connection refused" in str(e) or "Weaviate" in str(e):
+                        logger.warning(f"Weaviate connection failed during real-time pipeline initialization: {e}")
+                        logger.warning("Continuing with limited functionality (Weaviate operations will be skipped)")
+                        # Create a minimal pipeline object for checkpoint operations
+                        from src.embedding_and_indexing import EmbeddingAndIndexingPipeline
+                        self.realtime_pipeline = object.__new__(EmbeddingAndIndexingPipeline)
+                        self.realtime_pipeline.config = self.config
+                        self.realtime_pipeline.weaviate_client = None
+                    else:
+                        raise
             
             # Load current state
-            self.realtime_pipeline.load_checkpoint(self.checkpoint_dir)
+            try:
+                self.realtime_pipeline.load_checkpoint(self.checkpoint_dir)
+            except Exception as e:
+                logger.warning(f"Error loading real-time checkpoint: {e}")
+                # Initialize empty state if checkpoint loading fails
+                if not hasattr(self.realtime_pipeline, 'retry_queue'):
+                    self.realtime_pipeline.retry_queue = []
             
             # Save current state before termination
-            self.realtime_pipeline.save_checkpoint(self.checkpoint_dir)
+            try:
+                self.realtime_pipeline.save_checkpoint(self.checkpoint_dir)
+            except Exception as e:
+                logger.warning(f"Error saving real-time checkpoint (continuing anyway): {e}")
             
             # Clear any pending retry queues
             if hasattr(self.realtime_pipeline, 'retry_queue'):
@@ -532,9 +553,13 @@ class TransitionController:
                 transition_results['termination'] = self.terminate_realtime_processing()
             
             if not transition_results['termination']['success']:
-                transition_results['status'] = 'failed'
-                logger.error(f"Transition failed during {direction.split('_')[0]} termination")
-                return transition_results
+                if override:
+                    logger.warning(f"Termination had issues but continuing due to override mode")
+                    logger.warning(f"Termination errors: {transition_results['termination'].get('errors', [])}")
+                else:
+                    transition_results['status'] = 'failed'
+                    logger.error(f"Transition failed during {direction.split('_')[0]} termination")
+                    return transition_results
             
             # Step 3: Consolidate state
             logger.info("Step 3: Consolidating state")
