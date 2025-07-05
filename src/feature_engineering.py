@@ -1348,11 +1348,11 @@ class FeatureEngineering:
         left_role = None
         right_role = None
         
-        if left_id in self.hash_lookup and 'role' in self.hash_lookup[left_id]:
-            left_role = self.hash_lookup[left_id]['role']
+        if left_id in self.hash_lookup and 'roles' in self.hash_lookup[left_id]:
+            left_role = self.hash_lookup[left_id]['roles']
             
-        if right_id in self.hash_lookup and 'role' in self.hash_lookup[right_id]:
-            right_role = self.hash_lookup[right_id]['role']
+        if right_id in self.hash_lookup and 'roles' in self.hash_lookup[right_id]:
+            right_role = self.hash_lookup[right_id]['roles']
             
         # Calculate role compatibility score
         role_score = 1.0  # Default to full compatibility
@@ -1925,21 +1925,31 @@ class FeatureEngineering:
     
     def normalize_features(self, features: np.ndarray, fit: bool = False) -> np.ndarray:
         """
-        Re-enabled normalization with LibraryCatalogScaler integration.
+        Conditionally normalize features based on configuration.
         
-        Uses domain-specific scaling strategies for library catalog entity resolution,
-        with feature group-based scaling and binary feature preservation.
+        When enable_feature_scaling=true: Uses LibraryCatalogScaler with domain-specific 
+        scaling strategies, feature group-based scaling, and binary feature preservation.
+        
+        When enable_feature_scaling=false: Returns raw features without any normalization.
+        This is the original approach that worked well due to features being naturally 
+        well-normalized (mostly 0-1 range).
         
         Args:
             features: Feature array to normalize
             fit: Whether to fit the scaler on this data
             
         Returns:
-            Normalized feature array using LibraryCatalogScaler
+            Normalized feature array (if scaling enabled) or raw features (if disabled)
         """
         # Early exit for empty input
         if features.size == 0:
             logger.warning("Empty feature array provided to normalize_features")
+            return features.copy()
+            
+        # Check if feature scaling is enabled in configuration
+        enable_scaling = self.config.get("use_enhanced_scaling", False)
+        if not enable_scaling:
+            logger.info("Feature scaling disabled by configuration - returning raw features")
             return features.copy()
             
         # Lazy initialization of scaling bridge

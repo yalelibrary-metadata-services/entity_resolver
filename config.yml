@@ -4,7 +4,7 @@
 random_seed: 42
 
 # Directory Paths
-input_dir: "/home/DataChemist/data/ops/split"
+input_dir: "data/input/training"
 output_dir: "data/output"
 checkpoint_dir: "data/checkpoints"
 ground_truth_dir: "data/ground_truth"
@@ -12,21 +12,21 @@ log_dir: "logs"
 
 # Taxonomy Configuration
 taxonomy_path: "data/input/revised_taxonomy_final.json"
-classified_data_path: "data/input/training/training_dataset_classified_2025-06-25.csv"
+classified_data_path: "data/input/training/training_dataset_classified_2025-007-04.csv"
 
 # Pipeline Configuration
 log_level: "INFO"
 debug_features: false
 vector_diagnostics_verbose: false
 embed_fields: ["composite", "person", "title", "roles", "subjects", "genres"]
-skip_fields: ["attribution", "provision", "relatedWork", "recordId", "personId"]
+skip_fields: ["marcKey", "attribution", "provision", "relatedWork", "recordId", "personId"]
 
 # Entity Matching Enhancement Configuration
 entity_matching:
   enhancement_aggressiveness: "none"  # Options: none, minimal, moderate, aggressive
 
-# Enhanced Scaling Configuration
-use_enhanced_scaling: true
+# Feature Scaling Configuration
+use_enhanced_scaling: false  # Set to true to enable LibraryCatalogScaler, false for raw features
 scaling_config_path: "scaling_config.yml"
 
 # Resource Allocation - Environment-specific configuration
@@ -84,7 +84,7 @@ tpd_poll_interval: 300                # OPTIMIZED: 5min polling for faster recov
 tpd_resume_threshold: 50000000        # OPTIMIZED: Resume when 50M tokens available
 
 # Batch Processing Configuration
-use_batch_embeddings: true   # Set to true to use OpenAI Batch API (50% cost savings, 24h turnaround)
+use_batch_embeddings: false   # Set to true to use OpenAI Batch API (50% cost savings, 24h turnaround)
 batch_embedding_size: 50000  # Number of requests per batch file (max 50,000)
 max_requests_per_file: 50000  # Maximum requests per JSONL file
 batch_manual_polling: true   # Set to true for manual polling, false for automatic polling
@@ -250,7 +250,7 @@ convergence_threshold: 0.00001
 l2_lambda: 0.01
 class_weight: 5.0
 early_stopping_patience: 10
-decision_threshold: 0.65 #0.2778 #0.68  # Was 0.85 - Lowered to be more inclusive
+decision_threshold: 0.56 #0.2778 #0.68  # Was 0.85 - Lowered to be more inclusive
 
 # GraphML Export Configuration
 graphml_export:
@@ -284,12 +284,13 @@ features:
     #- person_role_squared
     - composite_cosine
     - taxonomy_dissimilarity             # Domain-based dissimilarity from SetFit classification
-    #- composite_cosine_squared          # New squared version of composite cosine
+   # - composite_cosine_squared          # New squared version of composite cosine
     #- marcKey_cosine
     #- marcKey_title_squared             # New marcKey/title harmonic mean squared
     #- roles_cosine
     - birth_death_match
     #- title_cosine_squared
+    #- combined_title_person
     #- title_role_adjusted
     #- combined_person_title_role_adjusted
     #- person_title_adjusted_squared
@@ -394,9 +395,9 @@ custom_features:
     type: "composite_feature"
     components:
       - "person_title_squared"
-      - "title_cosine_squared"
-    operation: "multiply"
-    weight: 1.5
+      - "roles_cosine"
+    operation: "add"
+    weight: 1.0
   
   combined_person_title_role_adjusted:
     enabled: false     # Enabled for testing
@@ -405,10 +406,11 @@ custom_features:
       #- "person_title_squared"      
       #- "person_role_squared"
       #- "roles_cosine"
-      #- "title_role_adjusted"
-      - "marcKey_cosine"
-      - "composite_cosine"
-      - "title_cosine_squared"
+      - "person_title_squared"
+      - "title_role_adjusted"
+      #- "marcKey_cosine"
+      #- "composite_cosine"
+      #- "title_cosine_squared"
     operation: "multiply"
     weight: 1.0
     
@@ -419,12 +421,12 @@ feature_substitutions:
   # This avoids having to calculate base features when they are only used in a custom feature
   combined_person_title_role_adjusted:
     replaces:
-      #- "person_title_squared"   # Replace this core feature
+      - "person_title_squared"   # Replace this core feature
       #- "person_role_squared" 
       #- "roles_cosine"     
-      #- "title_role_adjusted"    # Also replace this core feature
-      - "title_cosine_squared"   # Also replace this core feature
-      - "marcKey_cosine"
+      - "title_role_adjusted"    # Also replace this core feature
+      #- "title_cosine_squared"   # Also replace this core feature
+      #- "marcKey_cosine"
       
   person_title_adjusted_squared:
     replaces:
@@ -432,9 +434,10 @@ feature_substitutions:
       - "title_role_adjusted"    # Also used within the calculation
     
       
-  #combined_title_person:
-  #  replaces:
-  #    - "title_cosine_squared"   # Replace this core feature when combined_title_person is enabled
+  combined_title_person:
+    replaces:
+      - "title_cosine_squared"   # Replace this core feature when combined_title_person is enabled
+      - "person_title_squared"
 
 # Query Parameters
 query_limit: 100
@@ -488,3 +491,14 @@ subject_imputation:
   centroid_weight: 0.7               # Weight given to centroid similarity in imputation scoring
   use_caching: true                  # Enable caching of imputation results for performance
   cache_size_limit: 10000            # Maximum number of cached imputation results
+
+# Mistral Classifier Configuration
+mistral_classifier:
+  enabled: true                     # Set to true to use Mistral instead of SetFit
+  model_id: "ft:classifier:ministral-3b-latest:2bec22ef:20250702:a2707cf5"  # Fine-tuned model ID
+  api_key_env: "MISTRAL_API_KEY"     # Environment variable for API key
+  batch_size: 50                     # Number of texts to process in a single batch
+  rate_limit_delay: 0.1              # Delay between API calls in seconds
+  confidence_threshold: 0.5          # Minimum confidence threshold for predictions
+  max_retries: 3                     # Maximum number of retries for failed API calls
+  retry_delay: 1.0                   # Initial delay between retries (exponential backoff)

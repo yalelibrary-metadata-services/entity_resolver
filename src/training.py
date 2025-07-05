@@ -1220,22 +1220,26 @@ def train_classifier(config: Dict[str, Any], feature_engineering: FeatureEnginee
     # Extract test pairs for detailed reporting
     test_pairs = [labeled_pairs[i] for i in test_indices]
     
-    # DISABLED: Initialize enhanced scaling if scaling configuration is present
+    # Scaling is now handled directly in feature_engineering.py normalize_features() method
     scaling_bridge = None
-    use_enhanced_scaling = False  # Force disable enhanced scaling
-    logger.warning("ENHANCED SCALING BRIDGE COMPLETELY DISABLED")
     
-    # Skip all scaling bridge initialization and setup
-    
-    # Normalize features with the selected scaling approach (unless disabled)
+    # Normalize features (scaling controlled by use_enhanced_scaling in config.yml)
     if disable_scaling:
-        logger.warning("*** FEATURE SCALING DISABLED - Using raw feature values directly ***")
+        logger.warning("*** FEATURE SCALING DISABLED via --disable-scaling flag - Using raw feature values directly ***")
         X_train_norm = X_train.copy()  # Use raw features directly
         X_test_norm = X_test.copy()    # Use raw features directly
     else:
+        # Scaling behavior now controlled by enable_feature_scaling in config.yml
+        # normalize_features will check this setting and either scale or return raw features
         X_train_norm = feature_engineering.normalize_features(X_train, fit=True)
         X_test_norm = feature_engineering.normalize_features(X_test)
-        logger.info(f"Normalized feature vectors using selected scaling approach")
+        
+        # Log the actual behavior based on configuration
+        enable_scaling = config.get("use_enhanced_scaling", False)
+        if enable_scaling:
+            logger.info("Feature scaling enabled - using LibraryCatalogScaler")
+        else:
+            logger.info("Feature scaling disabled by configuration - using raw features")
     
     # Train classifier
     feature_names = feature_engineering.get_feature_names()
@@ -1281,9 +1285,15 @@ def train_classifier(config: Dict[str, Any], feature_engineering: FeatureEnginee
     logger.info(f"Optimized decision threshold: {optimal_threshold:.4f}")
     
     # Add scaling information to report
+    if disable_scaling:
+        scaling_approach = "disabled_by_flag"
+    else:
+        enable_scaling = config.get("use_enhanced_scaling", False)
+        scaling_approach = "LibraryCatalogScaler" if enable_scaling else "raw_features"
+    
     scaling_info = {
-        "scaling_approach": "disabled" if disable_scaling else 
-                           (scaling_bridge.scaling.selected_scaler if scaling_bridge else "default"),
+        "scaling_approach": scaling_approach,
+        "use_enhanced_scaling": config.get("use_enhanced_scaling", False),
         "scaled_feature_statistics": {
             "mean": float(np.mean(X_train_norm)),
             "std": float(np.std(X_train_norm)),

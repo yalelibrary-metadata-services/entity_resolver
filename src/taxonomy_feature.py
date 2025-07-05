@@ -32,7 +32,7 @@ class TaxonomyDissimilarity:
         
         # Load paths from config
         taxonomy_path = config.get('taxonomy_path', 'data/input/revised_taxonomy_final.json')
-        classified_path = config.get('classified_data_path', 'data/input/training/training_dataset_classified_2025-06-25.csv')
+        classified_path = config.get('classified_data_path', 'data/input/training/training_dataset_classified_2025-07-04.csv')
         
         # Load taxonomy first and build parent-child map
         self.taxonomy = self._load_taxonomy(taxonomy_path)
@@ -133,13 +133,13 @@ class TaxonomyDissimilarity:
             df = pd.read_csv(path, encoding='utf-8', dtype={'identity': str})
             
             # Handle potential missing values
-            df = df.dropna(subset=['identity', 'personId', 'setfit_prediction'])
+            df = df.dropna(subset=['identity', 'personId', 'mistral_prediction'])
             
             # Build mappings
             for _, row in df.iterrows():
                 person_id = str(row['personId'])
                 identity = str(float(row['identity'])) if '.' in str(row['identity']) else str(row['identity'])
-                category = row['setfit_prediction']
+                category = row['mistral_prediction']
                 
                 # Map personId to identity
                 person_to_identity[person_id] = identity

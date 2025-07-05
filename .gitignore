@@ -186,3 +186,4 @@ setfit/model_multilingual_minilm
 data/output/
 logs/
 notebooks/wandb/
+pres/
